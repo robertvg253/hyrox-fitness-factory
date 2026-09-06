@@ -263,7 +263,7 @@ export default function ReservasPage() {
             No hay clases disponibles para {activeDay === 'HOY' ? 'el día de hoy' : 'mañana'}.
           </div>
         ) : (
-          Object.entries(clasesPorHora).map(([hora, clasesEnHora]: [string, any[]]) => (
+          (Object.entries(clasesPorHora) as [string, any[]][]).map(([hora, clasesEnHora]) => (
             <div key={hora} className="flex gap-4">
               
               {/* Eje de Tiempo (Izquierda) */}
