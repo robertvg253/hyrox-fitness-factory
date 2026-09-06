@@ -263,7 +263,7 @@ export default function ReservasPage() {
             No hay clases disponibles para {activeDay === 'HOY' ? 'el día de hoy' : 'mañana'}.
           </div>
         ) : (
-          Object.entries(clasesPorHora).map(([hora, clasesEnHora]) => (
+          Object.entries(clasesPorHora).map(([hora, clasesEnHora]: [string, any[]]) => (
             <div key={hora} className="flex gap-4">
               
               {/* Eje de Tiempo (Izquierda) */}
@@ -274,7 +274,7 @@ export default function ReservasPage() {
 
               {/* Contenedor Flex de Tarjetas */}
               <div className="flex-1 flex gap-4 overflow-x-auto snap-x snap-mandatory pb-4 hide-scrollbar">
-                {clasesEnHora.map((clase) => {
+                {clasesEnHora.map((clase: any) => {
                   const reservasCount = clase.reservas?.length || 0
                   const isFull = reservasCount >= clase.aforo_maximo
                   const userAlreadyBooked = clase.reservas?.some((r: any) => r.usuario_id === user?.id)
