@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { registrarEvento } from '@/src/services/logger'
+import { procesarRenovacion } from '@/src/services/subscription-engine'
 
 export async function POST(request: Request) {
   try {
@@ -13,8 +15,8 @@ export async function POST(request: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Guardar en la tabla webhooks_log
-    const { error } = await supabase
+    // 1. Guardar en la tabla webhooks_log
+    const { error: logError } = await supabase
       .from('webhooks_log')
       .insert({
         origen: 'r4',
@@ -22,41 +24,77 @@ export async function POST(request: Request) {
         processed: false
       });
 
-    if (error) {
-      console.error('[Webhook R4] Error guardando log en BD:', error);
-    } else {
-      // -----------------------------------------------------------------------
-      // PROCESAMIENTO BASE DE LA ORDEN DE COBRO
-      // -----------------------------------------------------------------------
-      const status = body?.status?.toLowerCase();
-      const orderId = body?.metadata?.order_id;
-      // Extraemos el identificador interno de R4
-      const r4TransactionId = body?.transaction_id || body?.reference;
-      // Extraemos el recibo definitivo del banco
-      const r4BankReference = body?.bank_reference;
+    if (logError) {
+      console.error('[Webhook R4] Error guardando log en BD:', logError);
+    }
 
-      if (orderId && status === 'approved') {
-        const { error: updateError } = await supabase
+    // -----------------------------------------------------------------------
+    // PROCESAMIENTO PRINCIPAL DE LA ORDEN Y SUSCRIPCIÓN
+    // -----------------------------------------------------------------------
+    const status = body?.status?.toLowerCase();
+    const transactionId = body?.transaction_id || body?.reference;
+    
+    if (transactionId && status === 'approved') {
+      // 2. Buscar la orden de cobro vinculada a este transaction_id
+      const { data: orden, error: ordenError } = await supabase
+        .from('ordenes_cobro')
+        .select('id, estado, suscripcion_id, metadata')
+        .eq('r4_transaction_id', String(transactionId))
+        .single();
+
+      if (ordenError || !orden) {
+        console.error(`[Webhook R4] Orden no encontrada para transaction_id ${transactionId}:`, ordenError?.message);
+      } else if (orden.estado === 'PENDIENTE' || orden.estado === 'ENVIADO') {
+        
+        // 3. Actualizar la Orden a APROBADO
+        const currentMetadata = typeof orden.metadata === 'object' && orden.metadata !== null ? orden.metadata : {};
+        const { error: updateOrdenError } = await supabase
           .from('ordenes_cobro')
           .update({
             estado: 'APROBADO',
-            r4_transaction_id: r4TransactionId || null,
-            r4_bank_reference: r4BankReference || null,
+            r4_bank_reference: body.bank_reference || null,
             metadata: { 
-              ...((body as any)?.metadata || {}), 
+              ...currentMetadata,
+              bank: body.bank,
+              exchange_rate: body.exchange_rate,
               webhook_processed_at: new Date().toISOString() 
             }
           })
-          .eq('id', orderId)
-          .eq('estado', 'PENDIENTE'); // Idempotencia: solo actualizar si estaba PENDIENTE
+          .eq('id', orden.id);
 
-        if (updateError) {
-          console.error(`[Webhook R4] Error actualizando la orden ${orderId}:`, updateError.message);
+        if (updateOrdenError) {
+          console.error(`[Webhook R4] Error actualizando orden ${orden.id}:`, updateOrdenError.message);
         } else {
-          console.log(`[Webhook R4] Orden ${orderId} actualizada a APROBADO exitosamente.`);
-          // Marcar el webhook como procesado
-          await supabase.from('webhooks_log').update({ processed: true }).eq('payload->>transaction_id', r4TransactionId);
+          console.log(`[Webhook R4] Orden ${orden.id} actualizada a APROBADO.`);
+          
+          await registrarEvento('ordenes_cobro', orden.id, 'PAGO_APROBADO', {
+            transaction_id: transactionId,
+            bank_reference: body.bank_reference
+          });
+
+          // 4. Ejecución del Time-Stacking (Motor de Suscripciones)
+          if (orden.suscripcion_id) {
+            const montoUsd = Number(orden.monto);
+            const tasaR4 = Number(body.exchange_rate) || 1; // Ajustar dependiendo del formato de R4
+            const montoPagadoVes = Number(body.amount?.value || body.amount) || (montoUsd * tasaR4); // Extraer pago real VES
+
+            await procesarRenovacion(
+              orden.id,
+              orden.suscripcion_id,
+              montoUsd,
+              tasaR4,
+              montoPagadoVes
+            );
+          }
+
+          // 5. Marcar Webhook como procesado
+          await supabase
+            .from('webhooks_log')
+            .update({ processed: true })
+            .eq('payload->>transaction_id', transactionId);
         }
+      } else {
+        console.log(`[Webhook R4] La orden ${orden.id} ya no está PENDIENTE/ENVIADO (Estado actual: ${orden.estado}). Ignorando.`);
       }
     }
 

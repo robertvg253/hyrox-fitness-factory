@@ -138,7 +138,7 @@ export default function FinanzasPage() {
                 <th className="pb-3 font-medium">Usuario</th>
                 <th className="pb-3 font-medium">Monto</th>
                 <th className="pb-3 font-medium">Estado</th>
-                <th className="pb-3 font-medium text-right">Referencia R4</th>
+                <th className="pb-3 font-medium text-right">R4 Transaction ID</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/50">

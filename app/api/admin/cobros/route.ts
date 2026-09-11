@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { emitirCobroR4 } from '@/src/services/r4-service'
+import { registrarEvento } from '@/src/services/logger'
 
 export async function POST(request: Request) {
   try {
@@ -74,6 +75,13 @@ export async function POST(request: Request) {
 
     const orderId = nuevaOrden.id
 
+    // Registrar evento en bitácora universal
+    await registrarEvento('ordenes_cobro', orderId, 'EMISION_COBRO', {
+      usuario_id,
+      suscripcion_id: suscripcionIdFinal,
+      monto: Number(monto)
+    })
+
     // 2. Llamar al servicio R4
     const r4Result = await emitirCobroR4({
       monto: Number(monto),
@@ -83,15 +91,15 @@ export async function POST(request: Request) {
       order_id: orderId,
     })
 
-    // 3. Actualizar orden
+    // ── 5a. Éxito: guardar r4_transaction_id en la orden ────────────────
     if (r4Result.success) {
-      await supabase
+      const { error: updateErr } = await supabase
         .from('ordenes_cobro')
         .update({
           estado: 'ENVIADO',
-          r4_transaction_id: r4Result.instruction_id ?? null,
+          r4_transaction_id: r4Result.transaction_id ?? null,
           metadata: {
-            origin: 'admin-panel',
+            origin: 'admin-manual',
             r4_raw: r4Result.raw,
             timestamp: new Date().toISOString(),
           },
@@ -100,8 +108,10 @@ export async function POST(request: Request) {
 
       return NextResponse.json({
         ok: true,
-        message: 'Cobro emitido exitosamente',
+        message: 'Instrucción de cobro emitida correctamente.',
         order_id: orderId,
+        r4_transaction_id: r4Result.transaction_id,
+        db_update_error: updateErr?.message ?? null,
       })
     } else {
       await supabase

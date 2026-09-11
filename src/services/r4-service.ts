@@ -21,8 +21,8 @@ export interface R4CobroPayload {
 
 export interface R4CobroResult {
   success: boolean;
-  /** ID de instrucción retornado por R4 (para guardar en ordenes_cobro) */
-  instruction_id?: string;
+  /** ID de transacción retornado por R4 (para guardar en ordenes_cobro) */
+  transaction_id?: string;
   /** Respuesta cruda de R4 para auditoría */
   raw?: unknown;
   error?: string;
@@ -119,12 +119,12 @@ export async function emitirCobroR4(payload: R4CobroPayload): Promise<R4CobroRes
 
     console.info('[R4 emitirCobroR4] Instrucción emitida exitosamente:', {
       order_id,
-      instruction_id: json?.id,
+      transaction_id: json?.transaction_id || json?.reference || json?.id,
     });
 
     return {
       success: true,
-      instruction_id: json?.id ?? json?.instruction_id,
+      transaction_id: json?.transaction_id || json?.reference || json?.id,
       raw: json,
     };
 
