@@ -38,7 +38,7 @@ export async function POST(request: Request) {
       // 2. Buscar la orden de cobro vinculada a este transaction_id
       const { data: orden, error: ordenError } = await supabase
         .from('ordenes_cobro')
-        .select('id, estado, suscripcion_id, metadata')
+        .select('id, estado, suscripcion_id, metadata, monto')
         .eq('r4_transaction_id', String(transactionId))
         .single();
 
