@@ -54,7 +54,7 @@ const menuGroups: MenuGroup[] = [
       },
       { name: 'Calendario', href: '/admin/calendario', icon: CalendarDays },
       { name: 'Control de Aforo', href: '/admin/aforo', icon: UserCheck },
-      { name: 'Finanzas & Cobranza', href: '/admin/finanzas', icon: CreditCard },
+      { name: 'Finanzas & Cobranza', href: '/admin/dashboard/finanzas', icon: CreditCard },
       { name: 'Usuarios', href: '/admin/usuarios', icon: Users },
     ]
   }

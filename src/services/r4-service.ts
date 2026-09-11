@@ -5,6 +5,7 @@
  * NO importar en componentes cliente ("use client").
  */
 import { ProxyAgent } from 'undici';
+import { getValidToken } from './r4-token-manager';
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -31,7 +32,7 @@ export interface R4CobroResult {
 // Helpers de configuración
 // ---------------------------------------------------------------------------
 
-function getR4Config() {
+export function getR4Config() {
   const apiKey = process.env.R4_API_KEY;
   const apiUrl = process.env.R4_API_URL;
   const proxyUrl = process.env.DO_PROXY_URL;
@@ -49,47 +50,6 @@ function getR4Config() {
 
   // Normalizar: quitar barra final si existe
   return { apiKey, apiUrl: apiUrl.replace(/\/$/, ''), dispatcher };
-}
-
-// ---------------------------------------------------------------------------
-// 1. Obtener token efímero
-// ---------------------------------------------------------------------------
-
-/**
- * Solicita un token Bearer efímero a la API de R4 Conecta.
- * El token tiene vida corta; se recomienda obtenerlo justo antes de cada operación.
- */
-export async function getR4Token(): Promise<string> {
-  const { apiKey, apiUrl, dispatcher } = getR4Config();
-
-  const response = await fetch(`${apiUrl}/restapi/api/token/`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ api_key: apiKey }),
-    ...(dispatcher && { dispatcher }),
-  } as RequestInit);
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => '(sin cuerpo)');
-    const err = `[R4 getR4Token] HTTP ${response.status}: ${body}`;
-    console.error(err);
-    throw new Error(err);
-  }
-
-  const json = await response.json();
-
-  // R4 devuelve el token en json.access_token
-  const token: string | undefined = json?.access_token;
-
-  if (!token) {
-    const err = `[R4 getR4Token] Respuesta inesperada — sin campo "access_token": ${JSON.stringify(json)}`;
-    console.error(err);
-    throw new Error(err);
-  }
-
-  return token;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,8 +74,8 @@ export async function emitirCobroR4(payload: R4CobroPayload): Promise<R4CobroRes
   try {
     const { apiUrl, dispatcher } = getR4Config();
 
-    // Paso 1: token efímero
-    const token = await getR4Token();
+    // Paso 1: token cacheado o nuevo
+    const token = await getValidToken();
 
     // Paso 2: construir body según especificación R4
     const body = {
@@ -169,9 +129,15 @@ export async function emitirCobroR4(payload: R4CobroPayload): Promise<R4CobroRes
     };
 
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const errorObj = err as any;
+    const message = errorObj?.message || String(err);
+    const cause = errorObj?.cause || 'No cause available';
+    const { apiUrl } = getR4Config();
+    
     console.error('[R4 emitirCobroR4] Error inesperado:', {
       message,
+      cause,
+      url: `${apiUrl}/restapi/api/instructions/`,
       // Ocultar datos sensibles del atleta en logs
       payload: { monto, nombre, cedula: '***', telefono: '***', order_id },
     });
