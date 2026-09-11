@@ -12,13 +12,13 @@ export function BottomNav() {
       <Link href="/dashboard" className={`flex flex-col items-center gap-1 ${pathname === '/dashboard' ? 'text-brand-primary' : 'text-zinc-500 hover:text-zinc-300'} transition-colors`}>
         <Home className="w-6 h-6" />
       </Link>
-      <Link href="/dashboard/calendar" className={`flex flex-col items-center gap-1 ${pathname === '/dashboard/calendar' ? 'text-brand-primary' : 'text-zinc-500 hover:text-zinc-300'} transition-colors`}>
+      <Link href="/dashboard/reservas" className={`flex flex-col items-center gap-1 ${pathname === '/dashboard/reservas' ? 'text-brand-primary' : 'text-zinc-500 hover:text-zinc-300'} transition-colors`}>
         <CalendarDays className="w-6 h-6" />
       </Link>
       <Link href="/dashboard/messages" className={`flex flex-col items-center gap-1 ${pathname === '/dashboard/messages' ? 'text-brand-primary' : 'text-zinc-500 hover:text-zinc-300'} transition-colors`}>
         <MessageSquare className="w-6 h-6" />
       </Link>
-      <Link href="/dashboard/profile" className={`flex flex-col items-center gap-1 ${pathname === '/dashboard/profile' ? 'text-brand-primary' : 'text-zinc-500 hover:text-zinc-300'} transition-colors`}>
+      <Link href="/dashboard/perfil" className={`flex flex-col items-center gap-1 ${pathname === '/dashboard/perfil' ? 'text-brand-primary' : 'text-zinc-500 hover:text-zinc-300'} transition-colors`}>
         <User className="w-6 h-6" />
       </Link>
     </nav>

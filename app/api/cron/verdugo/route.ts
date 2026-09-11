@@ -52,40 +52,44 @@ export async function GET(request: Request) {
     let inactivadasIncidencia = 0;
 
     for (const sub of (morosas || [])) {
-      // Buscar si existe alguna orden reciente con incidencia = true para esta suscripción
-      const { data: ordenConIncidencia } = await supabase
-        .from('ordenes_cobro')
-        .select('id')
-        .eq('suscripcion_id', sub.id)
-        .eq('incidencia', true)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
+      try {
+        // Buscar si existe alguna orden reciente con incidencia = true para esta suscripción
+        const { data: ordenConIncidencia } = await supabase
+          .from('ordenes_cobro')
+          .select('id')
+          .eq('suscripcion_id', sub.id)
+          .eq('incidencia', true)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
 
-      // Pasamos a INACTIVO
-      const { error: updateSubErr } = await supabase
-        .from('suscripciones')
-        .update({ estado: 'INACTIVO' })
-        .eq('id', sub.id);
+        // Pasamos a INACTIVO
+        const { error: updateSubErr } = await supabase
+          .from('suscripciones')
+          .update({ estado: 'INACTIVO' })
+          .eq('id', sub.id);
 
-      if (updateSubErr) {
-        console.error(`[CRON Verdugo] Error inactivando sub ${sub.id}:`, updateSubErr.message);
-        continue;
-      }
+        if (updateSubErr) {
+          console.error(`[CRON Verdugo] Error inactivando sub ${sub.id}:`, updateSubErr.message);
+          continue;
+        }
 
-      if (ordenConIncidencia) {
-        // Fallo Silencioso detectado
-        await registrarEvento('suscripciones', sub.id, 'SUSCRIPCION_VENCIDA_CON_INCIDENCIA', {
-          orden_id_asociada: ordenConIncidencia.id,
-          motivo: 'Se inactiva pero requiere revisión manual de pagos incompletos'
-        });
-        inactivadasIncidencia++;
-      } else {
-        // Vencimiento normal por impago
-        await registrarEvento('suscripciones', sub.id, 'SUSCRIPCION_VENCIDA', {
-          motivo: 'Impago'
-        });
-        inactivadasNormal++;
+        if (ordenConIncidencia) {
+          // Fallo Silencioso detectado
+          await registrarEvento('suscripciones', sub.id, 'SUSCRIPCION_VENCIDA_CON_INCIDENCIA', {
+            orden_id_asociada: ordenConIncidencia.id,
+            motivo: 'Se inactiva pero requiere revisión manual de pagos incompletos'
+          });
+          inactivadasIncidencia++;
+        } else {
+          // Vencimiento normal por impago
+          await registrarEvento('suscripciones', sub.id, 'SUSCRIPCION_VENCIDA', {
+            motivo: 'Impago'
+          });
+          inactivadasNormal++;
+        }
+      } catch (err) {
+        console.error(`[CRON Verdugo] Error fatal en iteración sub ${sub.id}:`, err);
       }
     }
 

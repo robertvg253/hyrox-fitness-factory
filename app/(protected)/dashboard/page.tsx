@@ -1,5 +1,6 @@
 import { createClient } from '@/src/utils/supabase/server'
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import { Bell, CalendarPlus, Dumbbell, CreditCard, TrendingUp, ArrowRight, Lock } from 'lucide-react'
 
 export default async function DashboardPage() {
@@ -19,7 +20,7 @@ export default async function DashboardPage() {
       rol,
       suscripciones (
         estado,
-        fecha_vencimiento
+        fecha_corte
       )
     `)
     .eq('id', user.id)
@@ -29,8 +30,19 @@ export default async function DashboardPage() {
   const suscripciones = usuario?.suscripciones || []
   const suscripcionActiva = Array.isArray(suscripciones) ? suscripciones[0] : suscripciones
 
+  // Obtener la próxima clase inmediata
+  const now = new Date().toISOString()
+  const { data: proximasClases } = await supabase
+    .from('clases_programadas')
+    .select('id, fecha_hora_inicio, disciplinas(nombre)')
+    .gte('fecha_hora_inicio', now)
+    .order('fecha_hora_inicio', { ascending: true })
+    .limit(1)
+
+  const proximaClase = proximasClases?.[0] || null
+
   const estado = (suscripcionActiva?.estado || '').toUpperCase()
-  const fechaVencimientoBD = suscripcionActiva?.fecha_vencimiento
+  const fechaVencimientoBD = suscripcionActiva?.fecha_corte
   
   let estaVencido = false
 
@@ -113,10 +125,30 @@ export default async function DashboardPage() {
           <div className="absolute -right-10 -top-10 opacity-5">
              <Dumbbell className="w-48 h-48" />
           </div>
-          <div className="relative z-10">
+          <div className="relative z-10 flex flex-col items-start">
             <h2 className="text-xs font-bold tracking-widest text-zinc-400 uppercase mb-2">Tu Próxima Clase</h2>
-            <p className="text-3xl font-black text-white mb-1 tracking-tight">CrossTraining</p>
-            <p className="text-brand-primary font-medium">Hoy, 6:00 PM</p>
+            {proximaClase ? (
+              <>
+                <p className="text-3xl font-black text-white mb-1 tracking-tight">
+                  {(proximaClase.disciplinas as any)?.nombre || 'Clase'}
+                </p>
+                <p className="text-brand-primary font-medium mb-4">
+                  {new Date(proximaClase.fecha_hora_inicio).toLocaleString('es-ES', { 
+                    weekday: 'long', hour: 'numeric', minute: '2-digit', hour12: true 
+                  })}
+                </p>
+                <Link href="/dashboard/reservas" className="px-5 py-2 bg-brand-primary text-black font-bold text-sm rounded-full hover:opacity-90 transition-opacity">
+                  Reservar Ahora
+                </Link>
+              </>
+            ) : (
+              <>
+                <p className="text-xl font-bold text-white mb-4 tracking-tight">No hay clases programadas hoy</p>
+                <Link href="/dashboard/reservas" className="px-5 py-2 border border-brand-primary text-brand-primary font-bold text-sm rounded-full hover:bg-brand-primary/10 transition-colors">
+                  Ver Horario
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -124,12 +156,12 @@ export default async function DashboardPage() {
       {/* Quick Access */}
       <section>
         <div className="flex justify-between items-center px-2">
-          <button className="flex flex-col items-center gap-2 group">
+          <Link href="/dashboard/reservas" className="flex flex-col items-center gap-2 group">
             <div className="w-14 h-14 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-white group-hover:border-brand-primary group-hover:text-brand-primary transition-all shadow-lg">
               <CalendarPlus className="w-6 h-6" />
             </div>
             <span className="text-xs font-medium text-zinc-400 group-hover:text-white transition-colors">Agendar</span>
-          </button>
+          </Link>
           
           <button className="flex flex-col items-center gap-2 group">
             <div className="w-14 h-14 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-white group-hover:border-brand-primary group-hover:text-brand-primary transition-all shadow-lg">

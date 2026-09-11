@@ -63,7 +63,7 @@ export async function middleware(request: NextRequest) {
           rol,
           suscripciones (
             estado,
-            fecha_vencimiento
+            fecha_corte
           )
         `)
         .eq('id', user.id)
@@ -85,7 +85,7 @@ export async function middleware(request: NextRequest) {
       const suscripcionActiva = Array.isArray(suscripciones) ? suscripciones[0] : suscripciones
 
       const estado = (suscripcionActiva?.estado || 'VENCIDO').toUpperCase()
-      const fechaVencimientoBD = suscripcionActiva?.fecha_vencimiento
+      const fechaVencimientoBD = suscripcionActiva?.fecha_corte
 
       // Restauramos la evaluación de fechas para los logs
       if (rol === 'ATLETA') {
@@ -95,7 +95,7 @@ export async function middleware(request: NextRequest) {
           const estaVencido = fechaVencimiento < ahora
           console.log(`[MIDDLEWARE] Evaluación de fecha: BD (${fechaVencimiento.toISOString()}) < Servidor (${ahora.toISOString()}) = ${estaVencido}`)
         } else if (estado === 'ACTIVO' && !fechaVencimientoBD) {
-          console.log("[MIDDLEWARE] ATLETA ACTIVO pero fecha_vencimiento es null. Aplicando bloqueo de seguridad en evaluación.")
+          console.log("[MIDDLEWARE] ATLETA ACTIVO pero fecha_corte es null. Aplicando bloqueo de seguridad en evaluación.")
         }
       }
 

@@ -50,91 +50,96 @@ export async function GET(request: Request) {
 
     // 4. Iterar y emitir cobros
     for (const sub of suscripciones) {
-      const usuario = Array.isArray(sub.usuarios) ? sub.usuarios[0] : sub.usuarios;
-      if (!usuario || !usuario.telefono || !usuario.cedula_rif) {
-        console.warn(`[CRON Emisor] Suscripción ${sub.id}: Usuario incompleto, saltando.`);
-        errores.push({ suscripcion: sub.id, error: 'Usuario incompleto' });
-        continue;
-      }
+      try {
+        const usuario = Array.isArray(sub.usuarios) ? sub.usuarios[0] : sub.usuarios;
+        if (!usuario || !usuario.telefono || !usuario.cedula_rif) {
+          console.warn(`[CRON Emisor] Suscripción ${sub.id}: Usuario incompleto, saltando.`);
+          errores.push({ suscripcion: sub.id, error: 'Usuario incompleto' });
+          continue;
+        }
 
-      // Buscar el monto de la última orden de esta suscripción
-      const { data: lastOrder } = await supabase
-        .from('ordenes_cobro')
-        .select('monto')
-        .eq('suscripcion_id', sub.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .single();
-
-      const monto = lastOrder?.monto || 50; // Fallback
-
-      // 4.1 Crear la orden PENDIENTE
-      const { data: nuevaOrden, error: ordenErr } = await supabase
-        .from('ordenes_cobro')
-        .insert({
-          usuario_id: sub.usuario_id,
-          suscripcion_id: sub.id,
-          monto: Number(monto),
-          moneda: 'USD',
-          estado: 'PENDIENTE',
-          metadata: { origin: 'cron-emisor', timestamp: new Date().toISOString() },
-        })
-        .select('id')
-        .single();
-
-      if (ordenErr || !nuevaOrden?.id) {
-        errores.push({ suscripcion: sub.id, error: 'Error creando orden' });
-        continue;
-      }
-
-      const orderId = nuevaOrden.id;
-
-      // 4.2 Emitir a R4
-      const r4Result = await emitirCobroR4({
-        monto: Number(monto),
-        nombre: usuario.nombre_completo,
-        cedula: usuario.cedula_rif,
-        telefono: usuario.telefono,
-        order_id: orderId,
-      });
-
-      if (r4Result.success) {
-        await supabase
+        // Buscar el monto de la última orden de esta suscripción
+        const { data: lastOrder } = await supabase
           .from('ordenes_cobro')
-          .update({
-            estado: 'ENVIADO',
-            r4_transaction_id: r4Result.transaction_id ?? null,
-            metadata: {
-              origin: 'cron-emisor',
-              r4_raw: r4Result.raw,
-              timestamp: new Date().toISOString(),
-            },
-          })
-          .eq('id', orderId);
+          .select('monto')
+          .eq('suscripcion_id', sub.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
 
-        await registrarEvento('ordenes_cobro', orderId, 'EMISION_COBRO', {
-          usuario_id: sub.usuario_id,
-          suscripcion_id: sub.id,
-          monto,
-          metodo: 'CRON_AUTOMATICO'
+        const monto = lastOrder?.monto || 50; // Fallback
+
+        // 4.1 Crear la orden PENDIENTE
+        const { data: nuevaOrden, error: ordenErr } = await supabase
+          .from('ordenes_cobro')
+          .insert({
+            usuario_id: sub.usuario_id,
+            suscripcion_id: sub.id,
+            monto: Number(monto),
+            moneda: 'USD',
+            estado: 'PENDIENTE',
+            metadata: { origin: 'cron-emisor', timestamp: new Date().toISOString() },
+          })
+          .select('id')
+          .single();
+
+        if (ordenErr || !nuevaOrden?.id) {
+          errores.push({ suscripcion: sub.id, error: 'Error creando orden' });
+          continue;
+        }
+
+        const orderId = nuevaOrden.id;
+
+        // 4.2 Emitir a R4
+        const r4Result = await emitirCobroR4({
+          monto: Number(monto),
+          nombre: usuario.nombre_completo,
+          cedula: usuario.cedula_rif,
+          telefono: usuario.telefono,
+          order_id: orderId,
         });
 
-        emitidos++;
-      } else {
-        await supabase
-          .from('ordenes_cobro')
-          .update({
-            estado: 'ERROR',
-            metadata: {
-              origin: 'cron-emisor',
-              r4_error: r4Result.error,
-              r4_raw: r4Result.raw,
-              timestamp: new Date().toISOString(),
-            },
-          })
-          .eq('id', orderId);
+        if (r4Result.success) {
+          await supabase
+            .from('ordenes_cobro')
+            .update({
+              estado: 'ENVIADO',
+              r4_transaction_id: r4Result.transaction_id ?? null,
+              metadata: {
+                origin: 'cron-emisor',
+                r4_raw: r4Result.raw,
+                timestamp: new Date().toISOString(),
+              },
+            })
+            .eq('id', orderId);
 
-        errores.push({ suscripcion: sub.id, error: r4Result.error });
+          await registrarEvento('ordenes_cobro', orderId, 'EMISION_COBRO', {
+            usuario_id: sub.usuario_id,
+            suscripcion_id: sub.id,
+            monto,
+            metodo: 'CRON_AUTOMATICO'
+          });
+
+          emitidos++;
+        } else {
+          await supabase
+            .from('ordenes_cobro')
+            .update({
+              estado: 'ERROR',
+              metadata: {
+                origin: 'cron-emisor',
+                r4_error: r4Result.error,
+                r4_raw: r4Result.raw,
+                timestamp: new Date().toISOString(),
+              },
+            })
+            .eq('id', orderId);
+
+          errores.push({ suscripcion: sub.id, error: r4Result.error });
+        }
+      } catch (err) {
+        console.error(`[CRON Emisor] Error fatal en iteración sub ${sub.id}:`, err);
+        errores.push({ suscripcion: sub.id, error: 'Error interno en iteración' });
       }
     }
 

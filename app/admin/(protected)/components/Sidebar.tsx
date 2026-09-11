@@ -54,7 +54,15 @@ const menuGroups: MenuGroup[] = [
       },
       { name: 'Calendario', href: '/admin/calendario', icon: CalendarDays },
       { name: 'Control de Aforo', href: '/admin/aforo', icon: UserCheck },
-      { name: 'Finanzas & Cobranza', href: '/admin/dashboard/finanzas', icon: CreditCard },
+      { 
+        name: 'Finanzas & Cobranza', 
+        icon: CreditCard,
+        subItems: [
+          { name: 'Dashboard', href: '/admin/dashboard/finanzas' },
+          { name: 'Auditoría', href: '/admin/dashboard/finanzas/auditoria' },
+          { name: 'Webhooks', href: '/admin/dashboard/finanzas/webhooks' }
+        ]
+      },
       { name: 'Usuarios', href: '/admin/usuarios', icon: Users },
     ]
   }
