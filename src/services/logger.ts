@@ -11,7 +11,8 @@ export type AccionLog =
   | 'CREACION_USUARIO'
   | 'SISTEMA_INICIADO'
   | 'SUSCRIPCION_VENCIDA'
-  | 'SUSCRIPCION_VENCIDA_CON_INCIDENCIA';
+  | 'SUSCRIPCION_VENCIDA_CON_INCIDENCIA'
+  | 'ORDEN_EXPIRADA';
 
 /**
  * Registra un evento de auditoría en la tabla universal `bitacora_eventos`

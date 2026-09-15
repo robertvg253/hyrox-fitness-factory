@@ -2,11 +2,11 @@
   "crons": [
     {
       "path": "/api/cron/verdugo",
-      "schedule": "38 18 * * *"
+      "schedule": "48 18 * * *"
     },
     {
       "path": "/api/cron/emisor",
-      "schedule": "40 18 * * *"
+      "schedule": "50 18 * * *"
     }
   ]
 }
