@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/emisor",
-      "schedule": "00 21 * * *"
+      "schedule": "55 21 * * *"
     }
   ]
 }
