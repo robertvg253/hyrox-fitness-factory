@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { registrarEvento } from '@/src/services/logger';
+import { getCaracasMidnightUTC } from '@/src/utils/timezone';
 
 export async function GET(request: Request) {
   // 1. Proteger el endpoint
@@ -18,24 +19,29 @@ export async function GET(request: Request) {
     // -------------------------------------------------------------------------
     // ACCIÓN A: Expirar órdenes antiguas (> 24h PENDIENTE o ENVIADO)
     // -------------------------------------------------------------------------
-    const ayer = new Date();
-    ayer.setHours(ayer.getHours() - 24);
+    const hace24Horas = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const { error: expError } = await supabase
+    const { data: expiradas, error: expError } = await supabase
       .from('ordenes_cobro')
       .update({ estado: 'EXPIRADO' })
       .in('estado', ['PENDIENTE', 'ENVIADO'])
-      .lt('created_at', ayer.toISOString());
+      .lt('created_at', hace24Horas.toISOString())
+      .select('id');
 
     if (expError) {
       console.error('[CRON Verdugo] Error expirando órdenes:', expError.message);
+    } else if (expiradas && expiradas.length > 0) {
+      for (const ord of expiradas) {
+        await registrarEvento('ordenes_cobro', ord.id, 'ORDEN_EXPIRADA', {
+          motivo: 'Tiempo de gracia (24h) agotado'
+        });
+      }
     }
 
     // -------------------------------------------------------------------------
-    // ACCIÓN B: Castigar suscripciones morosas (fecha_corte < HOY)
+    // ACCIÓN B: Castigar suscripciones morosas (fecha_corte < HOY en Caracas)
     // -------------------------------------------------------------------------
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
+    const hoy = getCaracasMidnightUTC(0);
 
     const { data: morosas, error: morError } = await supabase
       .from('suscripciones')

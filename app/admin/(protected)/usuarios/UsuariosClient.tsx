@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { Search } from 'lucide-react'
+import { formatCaracasDate } from '@/src/utils/timezone'
 
 type Orden = {
   id: string;
@@ -143,7 +144,7 @@ export default function UsuariosClient({ initialUsuarios }: UsuariosClientProps)
                       </td>
                       <td className="p-4 align-middle text-zinc-300 text-sm">
                         {subPrincipal?.fecha_corte 
-                          ? new Date(subPrincipal.fecha_corte).toLocaleDateString('es-ES')
+                          ? formatCaracasDate(subPrincipal.fecha_corte)
                           : '-'}
                       </td>
                       <td className="p-4 align-middle">

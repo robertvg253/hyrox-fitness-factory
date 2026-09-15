@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { User, Phone, Calendar, CreditCard, ChevronLeft } from 'lucide-react'
 import Link from 'next/link'
 import LogoutButton from './LogoutButton'
+import { formatCaracasDate } from '@/src/utils/timezone'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,7 +45,7 @@ export default async function PerfilAtletaPage() {
   const suscripcionActiva = suscripcionesArray.find((s: any) => s.estado === 'ACTIVO') || suscripcionesArray[0]
   const estado = (suscripcionActiva?.estado || 'INACTIVO').toUpperCase()
   const fechaCorte = suscripcionActiva?.fecha_corte 
-    ? new Date(suscripcionActiva.fecha_corte).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })
+    ? formatCaracasDate(suscripcionActiva.fecha_corte)
     : 'No disponible'
 
   return (

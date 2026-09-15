@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { emitirCobroR4 } from '@/src/services/r4-service';
 import { registrarEvento } from '@/src/services/logger';
+import { getCaracasMidnightUTC } from '@/src/utils/timezone';
 
 export async function GET(request: Request) {
   // 1. Proteger el endpoint (Básico: Header secreto en producción)
@@ -16,25 +17,24 @@ export async function GET(request: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // 2. Calcular fecha de corte (Mañana)
-    const mañanaInicio = new Date();
-    mañanaInicio.setDate(mañanaInicio.getDate() + 1);
-    mañanaInicio.setHours(0, 0, 0, 0);
+    // 2. Calcular fecha de corte (HOY y MAÑANA en Caracas)
+    const hoyInicio = getCaracasMidnightUTC(0);
+    const pasadoMañanaInicio = getCaracasMidnightUTC(2);
+    // Para <= pasadoMañanaInicio restamos un milisegundo o evaluamos estrictamente
+    const finVentanaMs = new Date(pasadoMañanaInicio.getTime() - 1);
 
-    const mañanaFin = new Date(mañanaInicio);
-    mañanaFin.setHours(23, 59, 59, 999);
-
-    // 3. Buscar suscripciones activas que vencen mañana
+    // 3. Buscar suscripciones activas que vencen hoy o mañana
     const { data: suscripciones, error: subError } = await supabase
       .from('suscripciones')
       .select(`
         id, 
         usuario_id, 
+        plan_base_usd,
         usuarios ( nombre_completo, cedula_rif, telefono )
       `)
       .eq('estado', 'ACTIVO')
-      .gte('fecha_corte', mañanaInicio.toISOString())
-      .lte('fecha_corte', mañanaFin.toISOString());
+      .gte('fecha_corte', hoyInicio.toISOString())
+      .lte('fecha_corte', finVentanaMs.toISOString());
 
     if (subError) {
       console.error('[CRON Emisor] Error buscando suscripciones:', subError.message);
@@ -58,16 +58,28 @@ export async function GET(request: Request) {
           continue;
         }
 
-        // Buscar el monto de la última orden de esta suscripción
-        const { data: lastOrder } = await supabase
+        const monto = sub.plan_base_usd || 0;
+        
+        if (monto <= 0) {
+          console.warn(`[CRON Emisor] Suscripción ${sub.id}: Plan base USD es 0 o inválido, omitiendo.`);
+          errores.push({ suscripcion: sub.id, error: 'Monto inválido o cero' });
+          continue;
+        }
+
+        // Bloqueo de Idempotencia: Verificar si ya existe un cobro en tránsito
+        const { data: ordenExistente } = await supabase
           .from('ordenes_cobro')
-          .select('monto')
+          .select('id')
           .eq('suscripcion_id', sub.id)
-          .order('created_at', { ascending: false })
+          .in('estado', ['PENDIENTE', 'ENVIADO'])
           .limit(1)
           .single();
 
-        const monto = lastOrder?.monto || 50; // Fallback
+        if (ordenExistente) {
+          console.warn(`[CRON Emisor] Suscripción ${sub.id}: Ya tiene orden en tránsito (${ordenExistente.id}), omitiendo.`);
+          errores.push({ suscripcion: sub.id, error: 'Orden ya en tránsito' });
+          continue;
+        }
 
         // 4.1 Crear la orden PENDIENTE
         const { data: nuevaOrden, error: ordenErr } = await supabase

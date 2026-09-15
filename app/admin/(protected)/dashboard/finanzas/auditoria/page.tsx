@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
+import { formatCaracasDateTime } from '@/src/utils/timezone'
 
 // Fuerza el renderizado en el servidor en cada petición (no cacheado)
 export const dynamic = 'force-dynamic'
@@ -93,11 +94,8 @@ export default async function AuditoriaPage() {
                     key={evento.id || evento.created_at + evento.entidad_id} 
                     className="border-b border-zinc-800/50 transition-colors hover:bg-zinc-800/30"
                   >
-                    <td className="p-4 align-top text-zinc-300">
-                      <div className="flex flex-col">
-                        <span>{new Date(evento.created_at).toLocaleDateString('es-ES')}</span>
-                        <span className="text-xs text-zinc-500">{new Date(evento.created_at).toLocaleTimeString('es-ES')}</span>
-                      </div>
+                    <td className="p-4 align-middle whitespace-nowrap text-zinc-300">
+                      {formatCaracasDateTime(evento.created_at)}
                     </td>
                     <td className="p-4 align-top">
                       <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${getActionColor(evento.accion)}`}>

@@ -43,7 +43,12 @@ export function getR4Config() {
     );
   }
 
-  const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
+  const dispatcher = proxyUrl ? new ProxyAgent({
+    uri: proxyUrl,
+    connectTimeout: 45000,
+    headersTimeout: 45000,
+    bodyTimeout: 45000
+  }) : undefined;
   if (proxyUrl) {
     console.info('[R4 Service] Enrutando tráfico a través del proxy estático (***)');
   }
@@ -94,6 +99,9 @@ export async function emitirCobroR4(payload: R4CobroPayload): Promise<R4CobroRes
       },
     };
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 segundos de timeout
+
     const response = await fetch(`${apiUrl}/restapi/api/instructions/`, {
       method: 'POST',
       headers: {
@@ -102,8 +110,11 @@ export async function emitirCobroR4(payload: R4CobroPayload): Promise<R4CobroRes
         'Idempotency-Key': order_id,
       },
       body: JSON.stringify(body),
+      signal: controller.signal,
       ...(dispatcher && { dispatcher }),
     } as RequestInit);
+
+    clearTimeout(timeoutId);
 
     const json = await response.json().catch(() => null);
 

@@ -16,14 +16,20 @@ async function fetchNewToken(): Promise<string> {
 
   console.info('[R4 Token Manager] Solicitando un nuevo token a R4 Conecta...');
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 45000);
+
   const response = await fetch(`${apiUrl}/restapi/api/token/`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ api_key: apiKey }),
+    signal: controller.signal,
     ...(dispatcher && { dispatcher }),
   } as RequestInit);
+
+  clearTimeout(timeoutId);
 
   if (!response.ok) {
     const body = await response.text().catch(() => '(sin cuerpo)');

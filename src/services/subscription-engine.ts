@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { registrarEvento } from './logger';
+import { getCaracasMidnightUTC } from '@/src/utils/timezone';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -54,19 +55,16 @@ export async function procesarRenovacion(
     return false;
   }
 
-  const ahora = new Date();
-  let nuevaFechaCorte = new Date();
+  let nuevaFechaCorte = getCaracasMidnightUTC(0);
   
   if (suscripcion.fecha_corte) {
-    const fechaCorteActual = new Date(suscripcion.fecha_corte);
-    // Si está ACTIVA y en el futuro, sumamos al corte actual (Renovación Anticipada)
-    if (suscripcion.estado === 'ACTIVO' && fechaCorteActual > ahora) {
-      nuevaFechaCorte = new Date(fechaCorteActual);
-    }
+    // Time-Stacking Preciso: NO usamos la fecha del servidor, sino la que está en la base de datos
+    // para no regalar días por pagos tardíos (Pagos Zombie).
+    nuevaFechaCorte = new Date(suscripcion.fecha_corte);
   }
 
-  // Time-Stacking: Sumar 1 mes exacto
-  nuevaFechaCorte.setMonth(nuevaFechaCorte.getMonth() + 1);
+  // Time-Stacking: Sumar 1 mes exacto de forma segura en UTC
+  nuevaFechaCorte.setUTCMonth(nuevaFechaCorte.getUTCMonth() + 1);
 
   const { error: updateSubError } = await supabase
     .from('suscripciones')
