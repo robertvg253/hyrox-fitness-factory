@@ -29,7 +29,7 @@ export async function obtenerTodosLosPlanes() {
 
     return { success: true, data: planesMapeados }
   } catch (err: any) {
-    return { success: false, error: err.message }
+    return { success: false, error: err.message, data: [] }
   }
 }
 

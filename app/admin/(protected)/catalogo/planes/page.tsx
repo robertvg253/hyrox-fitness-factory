@@ -18,7 +18,7 @@ export default function PlanesCatalogPage() {
     try {
       const res = await obtenerTodosLosPlanes()
       if (res.success) {
-        setPlanes(res.data)
+        setPlanes(res.data || [])
       } else {
         toast.error('Error al cargar los planes')
       }
