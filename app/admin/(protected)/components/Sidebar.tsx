@@ -14,8 +14,9 @@ import {
   MapPin
 } from 'lucide-react';
 import { createClient } from '@/src/utils/supabase/client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTenant } from './TenantProvider';
+import { hasFinanceAccess } from '@/src/utils/permissions';
 
 type SubItem = {
   name: string;
@@ -49,6 +50,7 @@ const menuGroups: MenuGroup[] = [
         icon: Box, 
         subItems: [
           { name: 'Disciplinas', href: '/admin/disciplinas' },
+          { name: 'Planes', href: '/admin/catalogo/planes' },
           { name: 'Sede', href: '/admin/sede' }
         ] 
       },
@@ -76,6 +78,42 @@ export default function Sidebar() {
   
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
   const [isSedeDropdownOpen, setIsSedeDropdownOpen] = useState(false);
+  const [role, setRole] = useState<string>('RECEPCION');
+  const [userName, setUserName] = useState<string>('Usuario');
+  const [userEmail, setUserEmail] = useState<string>('');
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user?.email) {
+        setUserName(session.user.user_metadata?.name || 'Administrador');
+        setUserEmail(session.user.email || '');
+
+        // Obtener el rol real directamente de la base de datos
+        supabase
+          .from('usuarios')
+          .select('rol')
+          .eq('email', session.user.email)
+          .single()
+          .then(({ data, error }) => {
+            if (!error && data?.rol) {
+              setRole(data.rol);
+            } else {
+              setRole(session.user.user_metadata?.role || 'RECEPCION');
+            }
+          });
+      }
+    });
+  }, [supabase]);
+
+  const filteredMenuGroups = menuGroups.map(group => ({
+    ...group,
+    items: group.items.filter(item => {
+      if (item.name === 'Finanzas & Cobranza') {
+        return hasFinanceAccess(role);
+      }
+      return true;
+    })
+  }));
 
   const toggleMenu = (name: string) => {
     setOpenMenus(prev => ({
@@ -108,7 +146,7 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 px-4 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
-        {menuGroups.map((group, idx) => (
+        {filteredMenuGroups.map((group, idx) => (
           <div key={idx} className={idx > 0 ? "mt-8" : "mt-2"}>
             <h3 className="px-3 text-[10px] uppercase tracking-widest text-white/40 font-semibold mb-2">
               {group.title}
@@ -242,11 +280,11 @@ export default function Sidebar() {
       {/* Perfil Inferior Pixel-Perfect */}
       <div className="flex flex-row items-center gap-3 p-4 border-t border-white/5">
         <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#02D7E5] to-blue-600 flex items-center justify-center text-white font-bold text-sm shadow-[0_0_15px_rgba(2,215,229,0.3)] shrink-0">
-          AD
+          {userName.substring(0, 2).toUpperCase()}
         </div>
         <div className="flex-1 overflow-hidden">
-          <p className="text-sm font-semibold text-white truncate">Administrador</p>
-          <p className="text-[11px] text-gray-500 truncate mt-0.5">admin@fitnessfactory.com</p>
+          <p className="text-sm font-semibold text-white truncate">{userName}</p>
+          <p className="text-[11px] text-gray-500 truncate mt-0.5">{userEmail}</p>
         </div>
         
         <button

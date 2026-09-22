@@ -17,24 +17,41 @@ export async function GET(request: Request) {
     );
 
     // -------------------------------------------------------------------------
-    // ACCIÓN A: Expirar órdenes antiguas (> 24h PENDIENTE o ENVIADO)
+    // ACCIÓN A: Expirar órdenes antiguas (> 24h PENDIENTE o ENVIADO) - Defensivo
     // -------------------------------------------------------------------------
     const hace24Horas = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const { data: expiradas, error: expError } = await supabase
+    const { data: posiblesExpirables, error: expError } = await supabase
       .from('ordenes_cobro')
-      .update({ estado: 'EXPIRADO' })
+      .select('id, suscripcion_id')
       .in('estado', ['PENDIENTE', 'ENVIADO'])
-      .lt('created_at', hace24Horas.toISOString())
-      .select('id');
+      .lt('created_at', hace24Horas.toISOString());
 
     if (expError) {
-      console.error('[CRON Verdugo] Error expirando órdenes:', expError.message);
-    } else if (expiradas && expiradas.length > 0) {
-      for (const ord of expiradas) {
-        await registrarEvento('ordenes_cobro', ord.id, 'ORDEN_EXPIRADA', {
-          motivo: 'Tiempo de gracia (24h) agotado'
-        });
+      console.error('[CRON Verdugo] Error buscando órdenes a expirar:', expError.message);
+    } else if (posiblesExpirables && posiblesExpirables.length > 0) {
+      for (const ord of posiblesExpirables) {
+        // Blindaje: Solo expirar si es realmente el ÚLTIMO intento de cobro de esa suscripción
+        const { data: ultimaOrden } = await supabase
+          .from('ordenes_cobro')
+          .select('id')
+          .eq('suscripcion_id', ord.suscripcion_id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (ultimaOrden && ultimaOrden.id === ord.id) {
+          await supabase
+            .from('ordenes_cobro')
+            .update({ estado: 'EXPIRADO' })
+            .eq('id', ord.id);
+
+          await registrarEvento('ordenes_cobro', ord.id, 'ORDEN_EXPIRADA', {
+            motivo: 'Tiempo de gracia (24h) agotado'
+          });
+        } else {
+          console.warn(`[CRON Verdugo] Anomalía histórica: La orden ${ord.id} no es la más reciente. Se ignora.`);
+        }
       }
     }
 

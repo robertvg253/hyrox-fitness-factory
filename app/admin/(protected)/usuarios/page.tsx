@@ -1,10 +1,14 @@
 import { createClient } from '@supabase/supabase-js'
 import UsuariosClient from './UsuariosClient'
 import { Users as UsersIcon } from 'lucide-react'
+import { cookies } from 'next/headers'
 
 export const dynamic = 'force-dynamic'
 
 export default async function UsuariosPage() {
+  const cookieStore = await cookies()
+  const activeSedeId = cookieStore.get('active_sede')?.value || null
+
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -22,6 +26,12 @@ export default async function UsuariosPage() {
         id,
         estado,
         fecha_corte,
+        planes (
+          id,
+          nombre,
+          precio_usd,
+          sedes
+        ),
         ordenes_cobro (
           id,
           estado,
@@ -54,7 +64,7 @@ export default async function UsuariosPage() {
         </div>
       </div>
 
-      <UsuariosClient initialUsuarios={safeUsuarios as any} />
+      <UsuariosClient initialUsuarios={safeUsuarios as any} activeSedeId={activeSedeId} />
     </div>
   )
 }

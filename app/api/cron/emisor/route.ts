@@ -29,7 +29,7 @@ export async function GET(request: Request) {
       .select(`
         id, 
         usuario_id, 
-        plan_base_usd,
+        planes ( id, nombre, precio_usd, sedes ),
         usuarios ( nombre_completo, cedula_rif, telefono )
       `)
       .eq('estado', 'ACTIVO')
@@ -58,7 +58,7 @@ export async function GET(request: Request) {
           continue;
         }
 
-        const monto = sub.plan_base_usd || 0;
+        const monto = sub.planes?.precio_usd || 0;
         
         if (monto <= 0) {
           console.warn(`[CRON Emisor] Suscripción ${sub.id}: Plan base USD es 0 o inválido, omitiendo.`);
@@ -66,17 +66,17 @@ export async function GET(request: Request) {
           continue;
         }
 
-        // Bloqueo de Idempotencia: Verificar si ya existe un cobro en tránsito
-        const { data: ordenExistente } = await supabase
+        // Bloqueo de Idempotencia: Verificar el estado de la última orden absoluta
+        const { data: ultimaOrden } = await supabase
           .from('ordenes_cobro')
-          .select('id')
+          .select('id, estado')
           .eq('suscripcion_id', sub.id)
-          .in('estado', ['PENDIENTE', 'ENVIADO'])
+          .order('created_at', { ascending: false })
           .limit(1)
           .single();
 
-        if (ordenExistente) {
-          console.warn(`[CRON Emisor] Suscripción ${sub.id}: Ya tiene orden en tránsito (${ordenExistente.id}), omitiendo.`);
+        if (ultimaOrden && (ultimaOrden.estado === 'PENDIENTE' || ultimaOrden.estado === 'ENVIADO')) {
+          console.warn(`[CRON Emisor] Suscripción ${sub.id}: La última orden está en tránsito (${ultimaOrden.id}), omitiendo.`);
           errores.push({ suscripcion: sub.id, error: 'Orden ya en tránsito' });
           continue;
         }

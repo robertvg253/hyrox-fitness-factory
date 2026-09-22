@@ -46,12 +46,12 @@ export async function POST(request: Request) {
         console.error(`[Webhook R4] Orden no encontrada para transaction_id ${transactionId}:`, ordenError?.message);
       } else if (orden.estado === 'PENDIENTE' || orden.estado === 'ENVIADO') {
         
-        // 3. Actualizar la Orden a APROBADO
+        // 3. Actualizar la Orden a PAGADA
         const currentMetadata = typeof orden.metadata === 'object' && orden.metadata !== null ? orden.metadata : {};
         const { error: updateOrdenError } = await supabase
           .from('ordenes_cobro')
           .update({
-            estado: 'APROBADO',
+            estado: 'PAGADA',
             r4_bank_reference: body.bank_reference || null,
             metadata: { 
               ...currentMetadata,
@@ -65,26 +65,40 @@ export async function POST(request: Request) {
         if (updateOrdenError) {
           console.error(`[Webhook R4] Error actualizando orden ${orden.id}:`, updateOrdenError.message);
         } else {
-          console.log(`[Webhook R4] Orden ${orden.id} actualizada a APROBADO.`);
+          console.log(`[Webhook R4] Orden ${orden.id} actualizada a PAGADA.`);
           
           await registrarEvento('ordenes_cobro', orden.id, 'PAGO_APROBADO', {
             transaction_id: transactionId,
             bank_reference: body.bank_reference
           });
 
-          // 4. Ejecución del Time-Stacking (Motor de Suscripciones)
+          // 4. Ejecución del Time-Stacking o Activación Inicial
           if (orden.suscripcion_id) {
-            const montoUsd = Number(orden.monto);
-            const tasaR4 = Number(body.exchange_rate) || 1; // Ajustar dependiendo del formato de R4
-            const montoPagadoVes = Number(body.amount?.value || body.amount) || (montoUsd * tasaR4); // Extraer pago real VES
+            const { data: sub } = await supabase.from('suscripciones').select('estado').eq('id', orden.suscripcion_id).single()
+            
+            if (sub && sub.estado === 'INACTIVO') {
+              const fechaCorte = new Date()
+              fechaCorte.setUTCMonth(fechaCorte.getUTCMonth() + 1)
+              
+              await supabase.from('suscripciones').update({ 
+                estado: 'ACTIVO',
+                fecha_corte: fechaCorte.toISOString()
+              }).eq('id', orden.suscripcion_id)
 
-            await procesarRenovacion(
-              orden.id,
-              orden.suscripcion_id,
-              montoUsd,
-              tasaR4,
-              montoPagadoVes
-            );
+              console.log(`[Webhook R4] Suscripción ${orden.suscripcion_id} activada exitosamente tras cobro móvil.`)
+            } else {
+              const montoUsd = Number(orden.monto);
+              const tasaR4 = Number(body.exchange_rate) || 1; // Ajustar dependiendo del formato de R4
+              const montoPagadoVes = Number(body.amount?.value || body.amount) || (montoUsd * tasaR4); // Extraer pago real VES
+
+              await procesarRenovacion(
+                orden.id,
+                orden.suscripcion_id,
+                montoUsd,
+                tasaR4,
+                montoPagadoVes
+              );
+            }
           }
 
           // 5. Marcar Webhook como procesado
@@ -95,6 +109,23 @@ export async function POST(request: Request) {
         }
       } else {
         console.log(`[Webhook R4] La orden ${orden.id} ya no está PENDIENTE/ENVIADO (Estado actual: ${orden.estado}). Ignorando.`);
+      }
+    } else if (transactionId && (status === 'failed' || status === 'rejected' || status === 'error')) {
+      const { data: orden, error: ordenError } = await supabase
+        .from('ordenes_cobro')
+        .select('id, estado, metadata')
+        .eq('r4_transaction_id', String(transactionId))
+        .single();
+        
+      if (!ordenError && orden && (orden.estado === 'PENDIENTE' || orden.estado === 'ENVIADO')) {
+        const currentMetadata = typeof orden.metadata === 'object' && orden.metadata !== null ? orden.metadata : {};
+        await supabase.from('ordenes_cobro').update({
+          estado: 'RECHAZADA',
+          metadata: { ...currentMetadata, webhook_error: body.status_message || body.message || 'Error en R4' }
+        }).eq('id', orden.id);
+        console.log(`[Webhook R4] Orden ${orden.id} rechazada por fallo en cobro móvil.`);
+        
+        await supabase.from('webhooks_log').update({ processed: true }).eq('payload->>transaction_id', transactionId);
       }
     }
 

@@ -1,8 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { Search } from 'lucide-react'
+import { Search, UserPlus } from 'lucide-react'
 import { formatCaracasDate } from '@/src/utils/timezone'
+import ModalCobroManual from '@/components/admin/ModalCobroManual'
+import ModalNuevoAtleta from '@/components/admin/ModalNuevoAtleta'
+import ModalAsignarPlan from '@/components/admin/ModalAsignarPlan'
 
 type Orden = {
   id: string;
@@ -14,6 +17,13 @@ type Suscripcion = {
   id: string;
   estado: string;
   fecha_corte: string;
+  plan_id?: string;
+  planes?: {
+    id: string;
+    nombre: string;
+    precio_usd: number;
+    sedes?: string[];
+  };
   ordenes_cobro: Orden[];
 }
 
@@ -26,10 +36,40 @@ type Usuario = {
 
 interface UsuariosClientProps {
   initialUsuarios: Usuario[];
+  activeSedeId: string | null;
 }
 
-export default function UsuariosClient({ initialUsuarios }: UsuariosClientProps) {
+export default function UsuariosClient({ initialUsuarios, activeSedeId }: UsuariosClientProps) {
   const [searchTerm, setSearchTerm] = useState('')
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isNuevoAtletaModalOpen, setIsNuevoAtletaModalOpen] = useState(false)
+  const [isAsignarPlanModalOpen, setIsAsignarPlanModalOpen] = useState(false)
+  
+  const [selectedSubId, setSelectedSubId] = useState<string | null>(null)
+  const [selectedPrecio, setSelectedPrecio] = useState<number>(30)
+  
+  const [selectedUsuarioForPlan, setSelectedUsuarioForPlan] = useState<{ id: string, nombre: string } | null>(null)
+
+  const handleOpenModal = (subId: string, precio: number = 30) => {
+    setSelectedSubId(subId)
+    setSelectedPrecio(precio)
+    setIsModalOpen(true)
+  }
+
+  const handleModalSuccess = () => {
+    window.location.reload()
+  }
+
+  const handleNuevoAtletaSuccess = (usuarioCreado: any) => {
+    setIsNuevoAtletaModalOpen(false)
+    setSelectedUsuarioForPlan({ id: usuarioCreado.id, nombre: usuarioCreado.nombre_completo })
+    setIsAsignarPlanModalOpen(true)
+  }
+
+  const handleOpenAsignarPlan = (id: string, nombre: string) => {
+    setSelectedUsuarioForPlan({ id, nombre })
+    setIsAsignarPlanModalOpen(true)
+  }
 
   const filteredUsuarios = initialUsuarios.filter((u) => {
     const search = searchTerm.toLowerCase()
@@ -77,9 +117,9 @@ export default function UsuariosClient({ initialUsuarios }: UsuariosClientProps)
 
   return (
     <div className="space-y-6">
-      {/* Barra de búsqueda */}
-      <div className="flex items-center gap-4 bg-zinc-900/50 p-4 rounded-xl border border-white/5">
-        <div className="relative flex-1 max-w-md">
+      {/* Barra de búsqueda y Acción */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-zinc-900/50 p-4 rounded-xl border border-white/5">
+        <div className="relative w-full sm:w-auto sm:flex-1 max-w-md">
           <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
             <Search className="w-5 h-5 text-zinc-500" />
           </div>
@@ -91,6 +131,13 @@ export default function UsuariosClient({ initialUsuarios }: UsuariosClientProps)
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
+        <button
+          onClick={() => setIsNuevoAtletaModalOpen(true)}
+          className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-bold rounded-lg transition-colors text-sm"
+        >
+          <UserPlus className="w-4 h-4" />
+          Nuevo Atleta
+        </button>
       </div>
 
       {/* Tabla de Usuarios */}
@@ -104,12 +151,13 @@ export default function UsuariosClient({ initialUsuarios }: UsuariosClientProps)
                 <th className="h-12 px-4 text-left align-middle font-medium text-zinc-400">Estado Suscripción</th>
                 <th className="h-12 px-4 text-left align-middle font-medium text-zinc-400">Fecha de Corte</th>
                 <th className="h-12 px-4 text-left align-middle font-medium text-zinc-400">Cobros</th>
+                <th className="h-12 px-4 text-left align-middle font-medium text-zinc-400">Acciones</th>
               </tr>
             </thead>
             <tbody className="[&_tr:last-child]:border-0">
               {filteredUsuarios.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-4 text-center text-zinc-500">
+                  <td colSpan={6} className="p-4 text-center text-zinc-500">
                     No se encontraron usuarios que coincidan con la búsqueda.
                   </td>
                 </tr>
@@ -156,6 +204,23 @@ export default function UsuariosClient({ initialUsuarios }: UsuariosClientProps)
                           <span className="text-zinc-600 text-xs">-</span>
                         )}
                       </td>
+                      <td className="p-4 align-middle">
+                        {subPrincipal ? (
+                          <button
+                            onClick={() => handleOpenModal(subPrincipal.id, subPrincipal.planes?.precio_usd || 30)}
+                            className="px-3 py-1 bg-[#02D7E5]/10 hover:bg-[#02D7E5]/20 text-[#02D7E5] text-xs font-semibold rounded-lg transition-colors border border-[#02D7E5]/20"
+                          >
+                            Pago Manual
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleOpenAsignarPlan(usuario.id, usuario.nombre_completo)}
+                            className="px-3 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-semibold rounded-lg transition-colors border border-emerald-500/20"
+                          >
+                            Crear Suscripción
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   )
                 })
@@ -164,6 +229,33 @@ export default function UsuariosClient({ initialUsuarios }: UsuariosClientProps)
           </table>
         </div>
       </div>
+
+      {selectedSubId && (
+        <ModalCobroManual
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          suscripcionId={selectedSubId}
+          precioPlan={selectedPrecio}
+          onSuccess={handleModalSuccess}
+        />
+      )}
+
+      <ModalNuevoAtleta 
+        isOpen={isNuevoAtletaModalOpen}
+        onClose={() => setIsNuevoAtletaModalOpen(false)}
+        onSuccess={handleNuevoAtletaSuccess}
+      />
+
+      {selectedUsuarioForPlan && (
+        <ModalAsignarPlan
+          isOpen={isAsignarPlanModalOpen}
+          onClose={() => setIsAsignarPlanModalOpen(false)}
+          usuarioId={selectedUsuarioForPlan.id}
+          usuarioNombre={selectedUsuarioForPlan.nombre}
+          sedeId={activeSedeId}
+          onSuccess={handleModalSuccess}
+        />
+      )}
     </div>
   )
 }

@@ -19,6 +19,45 @@ export default async function AuditoriaPage() {
     .order('created_at', { ascending: false })
     .limit(100)
 
+  // Mapeo manual para obtener "Usuario Afectado" según la entidad
+  const usuariosAfectadosMap: Record<string, string> = {}
+  
+  if (eventos && eventos.length > 0) {
+    const ordenesIds = eventos.filter(e => e.entidad === 'ordenes_cobro').map(e => e.entidad_id)
+    const suscripcionesIds = eventos.filter(e => e.entidad === 'suscripciones').map(e => e.entidad_id)
+    const usuariosIds = eventos.filter(e => e.entidad === 'usuarios').map(e => e.entidad_id)
+
+    if (ordenesIds.length > 0) {
+      const { data: ordenesData } = await supabase
+        .from('ordenes_cobro')
+        .select('id, usuarios(nombre_completo)')
+        .in('id', ordenesIds)
+      ordenesData?.forEach((o: any) => {
+        if (o.usuarios?.nombre_completo) usuariosAfectadosMap[o.id] = o.usuarios.nombre_completo
+      })
+    }
+
+    if (suscripcionesIds.length > 0) {
+      const { data: subsData } = await supabase
+        .from('suscripciones')
+        .select('id, usuarios(nombre_completo)')
+        .in('id', suscripcionesIds)
+      subsData?.forEach((s: any) => {
+        if (s.usuarios?.nombre_completo) usuariosAfectadosMap[s.id] = s.usuarios.nombre_completo
+      })
+    }
+
+    if (usuariosIds.length > 0) {
+      const { data: usersData } = await supabase
+        .from('usuarios')
+        .select('id, nombre_completo')
+        .in('id', usuariosIds)
+      usersData?.forEach((u: any) => {
+        if (u.nombre_completo) usuariosAfectadosMap[u.id] = u.nombre_completo
+      })
+    }
+  }
+
   // Utilidad para asignar colores a los badges de las acciones
   const getActionColor = (accion: string) => {
     switch (accion) {
@@ -70,6 +109,7 @@ export default async function AuditoriaPage() {
               <tr className="border-b transition-colors hover:bg-zinc-800/50 data-[state=selected]:bg-zinc-800">
                 <th className="h-12 px-4 text-left align-middle font-medium text-zinc-400">Fecha / Hora</th>
                 <th className="h-12 px-4 text-left align-middle font-medium text-zinc-400">Acción</th>
+                <th className="h-12 px-4 text-left align-middle font-medium text-zinc-400">Usuario Afectado</th>
                 <th className="h-12 px-4 text-left align-middle font-medium text-zinc-400">Entidad</th>
                 <th className="h-12 px-4 text-left align-middle font-medium text-zinc-400">ID Entidad</th>
                 <th className="h-12 px-4 text-left align-middle font-medium text-zinc-400">Detalles (JSON)</th>
@@ -84,7 +124,7 @@ export default async function AuditoriaPage() {
                 </tr>
               ) : eventos?.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-4 text-center text-zinc-500">
+                  <td colSpan={6} className="p-4 text-center text-zinc-500">
                     No hay eventos registrados en la bitácora.
                   </td>
                 </tr>
@@ -102,6 +142,9 @@ export default async function AuditoriaPage() {
                         {evento.accion}
                       </span>
                     </td>
+                    <td className="p-4 align-top text-white font-medium">
+                      {usuariosAfectadosMap[evento.entidad_id] || <span className="text-zinc-500">-</span>}
+                    </td>
                     <td className="p-4 align-top text-zinc-400">
                       {evento.entidad}
                     </td>
@@ -111,8 +154,9 @@ export default async function AuditoriaPage() {
                     <td className="p-4 align-top">
                       {evento.detalles && Object.keys(evento.detalles).length > 0 ? (
                         <details className="cursor-pointer group">
-                          <summary className="text-xs font-medium text-blue-400 hover:text-blue-300 select-none">
+                          <summary className="text-xs font-medium text-blue-400 hover:text-blue-300 select-none flex items-center gap-1">
                             Ver Detalles
+                            {evento.detalles.admin_nombre && <span className="text-zinc-400 font-normal">({evento.detalles.admin_nombre})</span>}
                           </summary>
                           <pre className="mt-2 p-3 rounded bg-zinc-950/50 border border-zinc-800 text-[10px] text-zinc-300 whitespace-pre-wrap overflow-x-auto">
                             {JSON.stringify(evento.detalles, null, 2)}

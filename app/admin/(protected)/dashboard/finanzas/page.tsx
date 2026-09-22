@@ -2,21 +2,38 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/src/utils/supabase/client'
-import { Loader2, DollarSign, RefreshCw, AlertCircle, CheckCircle2, X } from 'lucide-react'
+import { Loader2, DollarSign, RefreshCw, AlertCircle, CheckCircle2, X, Info } from 'lucide-react'
 import { getFinanzasData } from './actions'
 import { useTenant } from '../../components/TenantProvider'
+import ModalDetallesOrden from '@/components/admin/ModalDetallesOrden'
 
 export default function FinanzasPage() {
   const { activeSede } = useTenant()
   const [usuarios, setUsuarios] = useState<any[]>([])
   const [ordenes, setOrdenes] = useState<any[]>([])
+  const [ordenesPorConciliar, setOrdenesPorConciliar] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isConciliating, setIsConciliating] = useState<string | null>(null)
+  const [selectedOrdenDetalle, setSelectedOrdenDetalle] = useState<any>(null)
   
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [selectedUser, setSelectedUser] = useState('')
   const [monto, setMonto] = useState('30.00')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [toast, setToast] = useState<{type: 'success'|'error', msg: string} | null>(null)
+  
+  const [proxyHealth, setProxyHealth] = useState<'ONLINE' | 'OFFLINE' | 'CHECKING'>('CHECKING')
+
+  const checkProxyHealth = async () => {
+    setProxyHealth('CHECKING')
+    try {
+      const res = await fetch('/api/finanzas/proxy-health')
+      const data = await res.json()
+      setProxyHealth(data.status === 'ONLINE' ? 'ONLINE' : 'OFFLINE')
+    } catch {
+      setProxyHealth('OFFLINE')
+    }
+  }
 
   const loadData = async () => {
     if (!activeSede?.id) return
@@ -26,6 +43,7 @@ export default function FinanzasPage() {
       const data = await getFinanzasData(activeSede.id)
       setUsuarios(data.usuarios)
       setOrdenes(data.ordenes)
+      setOrdenesPorConciliar(data.ordenesPorConciliar)
     } catch (error) {
       console.error('Error fetching data from Server Action:', error)
     }
@@ -38,6 +56,12 @@ export default function FinanzasPage() {
       loadData()
     }
   }, [activeSede?.id])
+
+  useEffect(() => {
+    checkProxyHealth()
+    const interval = setInterval(checkProxyHealth, 60000)
+    return () => clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     if (toast) {
@@ -84,6 +108,33 @@ export default function FinanzasPage() {
     }
   }
 
+  const handleConciliar = async (ordenId: string, accion: 'APROBAR' | 'RECHAZAR') => {
+    setIsConciliating(ordenId)
+    try {
+      const res = await fetch('/api/finanzas/conciliar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orden_id: ordenId,
+          accion,
+          admin_id: 'admin-123' // TODO: Integrar ID real del administrador
+        })
+      })
+
+      const data = await res.json()
+      if (res.ok) {
+        setToast({ type: 'success', msg: data.message })
+        loadData()
+      } else {
+        setToast({ type: 'error', msg: data.error || 'Error al conciliar la orden.' })
+      }
+    } catch (err: any) {
+      setToast({ type: 'error', msg: err.message || 'Error de conexión.' })
+    } finally {
+      setIsConciliating(null)
+    }
+  }
+
   // Estado derivado para el resumen del usuario
   const selectedUserDetails = usuarios.find(u => u.id === selectedUser)
   const hasActiveSubscription = selectedUserDetails?.suscripciones 
@@ -108,6 +159,24 @@ export default function FinanzasPage() {
       <header className="flex items-center justify-between">
         <h1 className="text-3xl font-bold text-white tracking-tight">Panel Financiero</h1>
         <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-full text-xs font-medium">
+            {proxyHealth === 'CHECKING' ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-500" />
+                <span className="text-zinc-400">Verificando R4...</span>
+              </>
+            ) : proxyHealth === 'ONLINE' ? (
+              <>
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                <span className="text-emerald-400">Conexión R4: Estable</span>
+              </>
+            ) : (
+              <>
+                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
+                <span className="text-red-400 font-bold">Alerta: Proxy R4 Caído</span>
+              </>
+            )}
+          </div>
           <button 
             onClick={loadData}
             disabled={isLoading}
@@ -126,6 +195,106 @@ export default function FinanzasPage() {
         </div>
       </header>
 
+      {/* Sección Pagos por Conciliar */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-xl">
+        <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
+          <AlertCircle className="w-5 h-5 text-yellow-500" />
+          Pagos por Conciliar
+        </h2>
+        
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm whitespace-nowrap">
+            <thead className="text-zinc-500 border-b border-zinc-800">
+              <tr>
+                <th className="pb-3 font-medium">Fecha</th>
+                <th className="pb-3 font-medium">Usuario</th>
+                <th className="pb-3 font-medium">Monto / Método</th>
+                <th className="pb-3 font-medium">Referencia</th>
+                <th className="pb-3 font-medium">Responsable</th>
+                <th className="pb-3 font-medium text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-800/50">
+              {isLoading && ordenesPorConciliar.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-zinc-500">
+                    <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+                    Cargando pagos pendientes...
+                  </td>
+                </tr>
+              ) : ordenesPorConciliar.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-zinc-500 bg-zinc-900/30">
+                    No hay pagos pendientes por conciliar.
+                  </td>
+                </tr>
+              ) : (
+                ordenesPorConciliar.map((orden) => {
+                  const metadata = orden.metadata || {}
+                  const isMixto = metadata.metodo_pago === 'MIXTO'
+                  const desglosados = metadata.pagos_desglosados || []
+
+                  return (
+                    <tr key={orden.id} className="hover:bg-zinc-800/20 transition-colors">
+                      <td className="py-4 text-zinc-300">
+                        {new Date(orden.created_at).toLocaleString('es-VE', { 
+                          day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' 
+                        })}
+                      </td>
+                      <td className="py-4 text-white font-medium">
+                        {orden.usuarios?.nombre_completo || 'Desconocido'}
+                        <div className="text-xs text-zinc-500 font-normal mt-0.5">{orden.usuarios?.telefono}</div>
+                      </td>
+                      <td className="py-4 text-zinc-300">
+                        <div className="font-bold text-white flex items-center gap-2">
+                          ${orden.monto}
+                          <button 
+                            onClick={() => setSelectedOrdenDetalle(orden)}
+                            className="p-1 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-[#02D7E5] transition-colors"
+                            title="Ver detalles"
+                          >
+                            <Info className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div className="text-xs text-[#02D7E5] font-medium mt-0.5">
+                          {isMixto ? 'MÚLTIPLES' : metadata.metodo_pago}
+                        </div>
+                      </td>
+                      <td className="py-4 text-zinc-300 font-mono text-xs">
+                        {metadata.referencia || '-'}
+                      </td>
+                      <td className="py-4 text-zinc-400 text-xs">
+                        {metadata.responsable_nombre || '-'}
+                      </td>
+                      <td className="py-4 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            onClick={() => handleConciliar(orden.id, 'RECHAZAR')}
+                            disabled={isConciliating !== null}
+                            className="px-3 py-1.5 bg-red-500/10 text-red-500 hover:bg-red-500/20 rounded-lg transition-colors text-xs font-bold disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {isConciliating === orden.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                            Rechazar
+                          </button>
+                          <button
+                            onClick={() => handleConciliar(orden.id, 'APROBAR')}
+                            disabled={isConciliating !== null}
+                            className="px-3 py-1.5 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 rounded-lg transition-colors text-xs font-bold disabled:opacity-50 flex items-center gap-1"
+                          >
+                            {isConciliating === orden.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                            Aprobar
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* Bitácora de Órdenes */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-xl">
         <h2 className="text-xl font-bold text-white mb-6">Bitácora de Órdenes (En Vivo)</h2>
@@ -138,7 +307,8 @@ export default function FinanzasPage() {
                 <th className="pb-3 font-medium">Usuario</th>
                 <th className="pb-3 font-medium">Monto</th>
                 <th className="pb-3 font-medium">Estado</th>
-                <th className="pb-3 font-medium text-right">R4 Transaction ID</th>
+                <th className="pb-3 font-medium text-right">Detalles / Responsable</th>
+                <th className="pb-3 font-medium text-right">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/50">
@@ -180,8 +350,26 @@ export default function FinanzasPage() {
                         {orden.estado}
                       </span>
                     </td>
-                    <td className="py-4 text-right text-zinc-500 font-mono text-xs">
-                      {orden.r4_transaction_id || '-'}
+                    <td className="py-4 text-right">
+                      {orden.metadata?.provider === 'MANUAL' ? (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="text-xs font-bold text-[#02D7E5]">{orden.metadata.metodo_pago}</span>
+                          <span className="text-[10px] text-zinc-400">
+                            {orden.estado === 'RECHAZADO' ? orden.metadata.rechazado_por_nombre : (orden.metadata.conciliado_por_nombre || orden.metadata.responsable_nombre)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="font-mono text-xs text-zinc-500">{orden.r4_transaction_id || 'R4 Auto'}</span>
+                      )}
+                    </td>
+                    <td className="py-4 text-right">
+                      <button 
+                        onClick={() => setSelectedOrdenDetalle(orden)}
+                        className="inline-flex items-center justify-center p-2 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-[#02D7E5] transition-colors"
+                        title="Ver Detalles"
+                      >
+                        <Info className="w-4 h-4" />
+                      </button>
                     </td>
                   </tr>
                 ))
@@ -299,6 +487,11 @@ export default function FinanzasPage() {
           </div>
         </div>
       )}
+      <ModalDetallesOrden
+        isOpen={!!selectedOrdenDetalle}
+        onClose={() => setSelectedOrdenDetalle(null)}
+        orden={selectedOrdenDetalle}
+      />
     </main>
   )
 }
