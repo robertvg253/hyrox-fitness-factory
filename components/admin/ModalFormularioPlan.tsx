@@ -20,6 +20,8 @@ export default function ModalFormularioPlan({ isOpen, onClose, onSuccess, planTo
   const [descripcion, setDescripcion] = useState('')
   const [precioUsd, setPrecioUsd] = useState('0.00')
   const [frecuencia, setFrecuencia] = useState(1) // Por defecto 1 mes
+  const [tipo, setTipo] = useState<'TIEMPO' | 'SESIONES'>('TIEMPO')
+  const [sesionesTotal, setSesionesTotal] = useState<number | ''>('')
   const [estado, setEstado] = useState('ACTIVO')
   const [sedesSeleccionadas, setSedesSeleccionadas] = useState<string[]>([])
   
@@ -33,6 +35,8 @@ export default function ModalFormularioPlan({ isOpen, onClose, onSuccess, planTo
         setDescripcion(planToEdit.descripcion || '')
         setPrecioUsd(planToEdit.precio_usd?.toString() || '0.00')
         setFrecuencia(planToEdit.frecuencia || 1)
+        setTipo(planToEdit.tipo || 'TIEMPO')
+        setSesionesTotal(planToEdit.sesiones_total || '')
         setEstado(planToEdit.estado || 'ACTIVO')
         setSedesSeleccionadas(planToEdit.sedes || [])
       } else {
@@ -41,6 +45,8 @@ export default function ModalFormularioPlan({ isOpen, onClose, onSuccess, planTo
         setDescripcion('')
         setPrecioUsd('0.00')
         setFrecuencia(1)
+        setTipo('TIEMPO')
+        setSesionesTotal('')
         setEstado('ACTIVO')
         setSedesSeleccionadas([])
       }
@@ -52,7 +58,7 @@ export default function ModalFormularioPlan({ isOpen, onClose, onSuccess, planTo
     try {
       const res = await obtenerSedesParaSelect()
       if (res.success) {
-        setSedesDisponibles(res.data)
+        setSedesDisponibles(res.data || [])
       } else {
         toast.error('Error al cargar sedes')
       }
@@ -80,8 +86,11 @@ export default function ModalFormularioPlan({ isOpen, onClose, onSuccess, planTo
     if (parseFloat(precioUsd) <= 0) {
       return toast.error('El precio debe ser mayor a 0')
     }
-    if (frecuencia <= 0) {
+    if (tipo === 'TIEMPO' && frecuencia <= 0) {
       return toast.error('La vigencia (frecuencia) debe ser al menos de 1 mes')
+    }
+    if (tipo === 'SESIONES' && (sesionesTotal === '' || sesionesTotal <= 0)) {
+      return toast.error('Debe ingresar una cantidad válida de sesiones')
     }
 
     setLoading(true)
@@ -91,9 +100,10 @@ export default function ModalFormularioPlan({ isOpen, onClose, onSuccess, planTo
         nombre: nombre.trim(),
         descripcion: descripcion.trim(),
         precio_usd: parseFloat(precioUsd),
-        frecuencia,
         estado,
-        sedes: sedesSeleccionadas
+        sedes: sedesSeleccionadas,
+        tipo,
+        sesiones_total: tipo === 'SESIONES' ? Number(sesionesTotal) : null
       }
 
       const res = await upsertPlan(payload)
@@ -114,20 +124,21 @@ export default function ModalFormularioPlan({ isOpen, onClose, onSuccess, planTo
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-xl bg-zinc-950 border border-white/10 shadow-2xl rounded-2xl flex flex-col max-h-[90vh]">
+    <>
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" onClick={onClose} />
+      <div className="fixed inset-y-0 right-0 w-full max-w-md bg-zinc-950 border-l border-white/10 z-50 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
         
-        <div className="flex items-center justify-between p-6 border-b border-white/10 bg-zinc-900/50 rounded-t-2xl">
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            {planToEdit ? 'Editar Plan' : 'Nuevo Plan'}
-          </h2>
-          <button onClick={onClose} className="p-2 text-zinc-400 hover:text-white bg-zinc-900 hover:bg-zinc-800 rounded-lg transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+        <div className="flex flex-col h-full">
+          <div className="flex items-center justify-between p-6 border-b border-white/10 bg-zinc-900/50">
+            <h2 className="text-xl font-bold text-white flex items-center gap-2">
+              {planToEdit ? 'Editar Plan' : 'Nuevo Plan'}
+            </h2>
+            <button type="button" onClick={onClose} className="p-2 text-zinc-400 hover:text-white bg-zinc-900 hover:bg-zinc-800 rounded-lg transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
 
-        <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-white/10">
+          <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-white/10">
           {loadingData ? (
             <div className="flex justify-center p-8">
               <Loader2 className="w-8 h-8 animate-spin text-[#02D7E5]" />
@@ -176,30 +187,60 @@ export default function ModalFormularioPlan({ isOpen, onClose, onSuccess, planTo
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-zinc-400 mb-1.5">Vigencia (Meses) <span className="text-red-400">*</span></label>
-                    <input
-                      type="number"
-                      required
-                      min="1"
-                      step="1"
-                      value={frecuencia}
-                      onChange={(e) => setFrecuencia(parseInt(e.target.value) || 1)}
+                    <label className="block text-sm font-medium text-zinc-400 mb-1.5">Tipo de Plan <span className="text-red-400">*</span></label>
+                    <select
+                      value={tipo}
+                      onChange={(e) => setTipo(e.target.value as 'TIEMPO' | 'SESIONES')}
                       className="w-full bg-zinc-900 border border-zinc-800 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-[#02D7E5] transition-colors"
-                    />
+                    >
+                      <option value="TIEMPO">Por Tiempo (Vigencia)</option>
+                      <option value="SESIONES">Por Sesiones</option>
+                    </select>
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-zinc-400 mb-1.5">Estado <span className="text-red-400">*</span></label>
-                  <select
-                    value={estado}
-                    onChange={(e) => setEstado(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-[#02D7E5] transition-colors"
-                  >
-                    <option value="ACTIVO">ACTIVO (Visible para ventas)</option>
-                    <option value="INACTIVO">INACTIVO (Pausado temporalmente)</option>
-                    <option value="ARCHIVADO">ARCHIVADO (Retirado del catálogo)</option>
-                  </select>
+                <div className="grid grid-cols-2 gap-4">
+                  {tipo === 'TIEMPO' ? (
+                    <div>
+                      <label className="block text-sm font-medium text-zinc-400 mb-1.5">Vigencia (Meses) <span className="text-red-400">*</span></label>
+                      <input
+                        type="number"
+                        required
+                        min="1"
+                        step="1"
+                        value={frecuencia}
+                        onChange={(e) => setFrecuencia(parseInt(e.target.value) || 1)}
+                        className="w-full bg-zinc-900 border border-zinc-800 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-[#02D7E5] transition-colors"
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-sm font-medium text-zinc-400 mb-1.5">Cantidad de Sesiones <span className="text-red-400">*</span></label>
+                      <input
+                        type="number"
+                        required
+                        min="1"
+                        step="1"
+                        value={sesionesTotal}
+                        onChange={(e) => setSesionesTotal(parseInt(e.target.value) || '')}
+                        className="w-full bg-zinc-900 border border-zinc-800 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-[#02D7E5] transition-colors"
+                        placeholder="Ej. 12"
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1.5">Estado <span className="text-red-400">*</span></label>
+                    <select
+                      value={estado}
+                      onChange={(e) => setEstado(e.target.value)}
+                      className="w-full bg-zinc-900 border border-zinc-800 text-white rounded-xl px-4 py-3 focus:outline-none focus:border-[#02D7E5] transition-colors"
+                    >
+                      <option value="ACTIVO">ACTIVO (Visible para ventas)</option>
+                      <option value="INACTIVO">INACTIVO (Pausado temporalmente)</option>
+                      <option value="ARCHIVADO">ARCHIVADO (Retirado del catálogo)</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
@@ -227,26 +268,26 @@ export default function ModalFormularioPlan({ isOpen, onClose, onSuccess, planTo
           )}
         </div>
 
-        <div className="p-6 border-t border-white/10 bg-zinc-900/50 rounded-b-2xl flex gap-3">
-          <button 
-            type="button" 
-            onClick={onClose} 
-            disabled={loading}
-            className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50"
-          >
-            Cancelar
-          </button>
-          <button 
-            type="submit" 
-            form="plan-form"
-            disabled={loading || loadingData}
-            className="flex-[2] py-3 bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-bold rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-[#02D7E5]/20"
-          >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Save className="w-5 h-5" /> Guardar Plan</>}
-          </button>
+          <div className="p-6 border-t border-white/10 bg-zinc-900/50 mt-auto flex gap-3">
+            <button 
+              type="button" 
+              onClick={onClose} 
+              disabled={loading}
+              className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button 
+              type="submit" 
+              form="plan-form"
+              disabled={loading || loadingData}
+              className="flex-[2] py-3 bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-bold rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-[#02D7E5]/20"
+            >
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Save className="w-5 h-5" /> Guardar Plan</>}
+            </button>
+          </div>
         </div>
-
       </div>
-    </div>
+    </>
   )
 }

@@ -1,58 +1,59 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import Link from 'next/link'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { Loader2 } from 'lucide-react'
+import { Loader2, ArrowRight, ShieldCheck } from 'lucide-react'
 import { createClient } from '@/src/utils/supabase/client'
-
-const loginSchema = z.object({
-  email: z.string().email('Ingresa un correo electrónico válido'),
-  password: z.string().min(1, 'La contraseña es obligatoria'),
-})
-
-type LoginFormValues = z.infer<typeof loginSchema>
+import { iniciarSesionUsuario } from '@/app/auth/actions'
+import toast from 'react-hot-toast'
 
 export default function LoginPage() {
   const router = useRouter()
   const supabase = createClient()
-  const [globalError, setGlobalError] = useState<string | null>(null)
+  
+  const [loading, setLoading] = useState(false)
+  
+  // Step 1: Identificación
+  const [tipoDocumento, setTipoDocumento] = useState('V')
+  const [numeroDocumento, setNumeroDocumento] = useState('')
+  const [password, setPassword] = useState('')
+  const [errorVisual, setErrorVisual] = useState('')
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-  } = useForm<LoginFormValues>({
-    resolver: zodResolver(loginSchema),
-  })
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setErrorVisual('')
 
-  const onSubmit = async (data: LoginFormValues) => {
+    if (numeroDocumento.length < 7) return toast.error('Ingresa un número válido de al menos 7 dígitos')
+    if (!password) return toast.error('Ingresa tu contraseña')
+    
+    const fullCedula = `${tipoDocumento}${numeroDocumento}`
+
+    setLoading(true)
     try {
-      setGlobalError(null)
-      const { error } = await supabase.auth.signInWithPassword({
-        email: data.email,
-        password: data.password,
-      })
-
-      if (error) {
-        // Mensaje de error genérico para seguridad
-        throw new Error('Credenciales inválidas o acceso denegado.')
+      const res = await iniciarSesionUsuario(fullCedula, password)
+      
+      if (!res.success) {
+        toast.error(res.error || 'Cédula o contraseña incorrecta.')
+        setErrorVisual(res.error || 'Cédula o contraseña incorrecta.')
+        return
       }
 
+      toast.success('¡Bienvenido!')
       router.push('/dashboard')
-      router.refresh()
-    } catch (error: any) {
-      setGlobalError(error.message)
+
+    } catch (err: any) {
+      toast.error('Error de conexión.')
+      setErrorVisual('Error de conexión.')
+    } finally {
+      setLoading(false)
     }
   }
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-black p-6 text-white">
-      <div className="w-full max-w-sm space-y-8 bg-zinc-950/80 p-8 rounded-2xl border border-zinc-900 shadow-2xl">
+      <div className="w-full max-w-sm space-y-8 bg-zinc-950/80 p-8 rounded-2xl border border-zinc-900 shadow-2xl animate-in fade-in zoom-in-95 duration-300">
         <div className="flex flex-col items-center text-center">
           <Image
             src="/images/LOGO TEXTURA01.png"
@@ -62,95 +63,84 @@ export default function LoginPage() {
             className="h-auto w-[150px] object-contain mb-2"
             priority
           />
-          <h2 className="text-xs font-bold tracking-widest text-zinc-400 uppercase">BIENVENIDO DE NUEVO</h2>
-        </div>
-        
-        {globalError && (
-          <div className="p-4 text-sm font-medium text-red-400 bg-red-950/20 border border-red-900/50 rounded-xl text-center">
-            {globalError}
-          </div>
-        )}
-
-        <div className="flex flex-row gap-4 mb-6">
-          <button 
-            type="button"
-            onClick={() => console.log('Próximamente')}
-            disabled={isSubmitting}
-            className="flex-1 flex items-center justify-center gap-2 py-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-colors disabled:opacity-50"
-          >
-            <svg viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg">
-              <path fill="#ffffff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-              <path fill="#ffffff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-              <path fill="#ffffff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-              <path fill="#ffffff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-            </svg>
-            <span className="text-sm font-medium">Google</span>
-          </button>
-          <button 
-            type="button"
-            onClick={() => console.log('Próximamente')}
-            disabled={isSubmitting}
-            className="flex-1 flex items-center justify-center gap-2 py-3 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-colors disabled:opacity-50"
-          >
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-              <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.04 2.26-.79 3.55-.83 1.55-.1 2.76.65 3.54 1.76-3.04 1.76-2.54 5.92.51 7.15-.71 1.69-1.57 3.33-2.68 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
-            </svg>
-            <span className="text-sm font-medium">Apple</span>
-          </button>
+          <h2 className="text-xs font-bold tracking-widest text-zinc-400 uppercase">
+            ACCESO ATLETAS
+          </h2>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="h-px bg-zinc-800 flex-1"></div>
-          <span className="text-xs text-zinc-500 font-medium">O</span>
-          <div className="h-px bg-zinc-800 flex-1"></div>
-        </div>
-
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+        <form onSubmit={handleLoginSubmit} className="space-y-6">
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-zinc-300 ml-1" htmlFor="email">
-              Correo Electrónico
+            <label className="block text-sm font-medium text-zinc-400 ml-1">
+              Cédula de Identidad
             </label>
-            <input
-              id="email"
-              type="email"
-              className="w-full p-4 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-brand-primary focus:border-brand-primary transition-all disabled:opacity-50"
-              placeholder="tu@email.com"
-              {...register('email')}
-              disabled={isSubmitting}
-            />
-            {errors.email && <p className="text-xs text-red-400 ml-1">{errors.email.message}</p>}
+            <div className="flex flex-row gap-2">
+              <select
+                value={tipoDocumento}
+                onChange={e => setTipoDocumento(e.target.value)}
+                disabled={loading}
+                className="w-[80px] p-4 bg-black border border-zinc-800 rounded-xl text-white focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all font-medium appearance-none text-center cursor-pointer disabled:opacity-50"
+              >
+                <option value="V">V</option>
+                <option value="E">E</option>
+                <option value="J">J</option>
+                <option value="G">G</option>
+                <option value="P">P</option>
+              </select>
+              <input
+                required
+                type="text"
+                autoComplete="username"
+                value={numeroDocumento}
+                onChange={e => {
+                  const val = e.target.value.replace(/\D/g, '').slice(0, 9)
+                  setNumeroDocumento(val)
+                }}
+                disabled={loading}
+                className="flex-1 p-4 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all disabled:opacity-50 font-medium"
+                placeholder="Ej. 12345678"
+              />
+            </div>
           </div>
-          
+
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-zinc-300 ml-1" htmlFor="password">
-              Contraseña
-            </label>
+            <div className="flex justify-between items-center ml-1">
+              <label className="block text-sm font-medium text-zinc-400">
+                Contraseña
+              </label>
+              <Link href="/recuperar-password" className="text-xs text-[#02D7E5] hover:text-white transition-colors">
+                ¿Olvidaste tu contraseña?
+              </Link>
+            </div>
             <input
-              id="password"
+              required
               type="password"
-              className="w-full p-4 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-brand-primary focus:border-brand-primary transition-all disabled:opacity-50"
+              autoComplete="current-password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              disabled={loading}
+              className="w-full p-4 bg-black border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all disabled:opacity-50 font-medium"
               placeholder="••••••••"
-              {...register('password')}
-              disabled={isSubmitting}
             />
-            {errors.password && <p className="text-xs text-red-400 ml-1">{errors.password.message}</p>}
           </div>
+
+          {errorVisual && (
+            <p className="text-red-400 text-sm font-medium text-center">{errorVisual}</p>
+          )}
 
           <button
             type="submit"
-            disabled={isSubmitting}
-            className="w-full flex items-center justify-center gap-2 py-4 font-bold text-zinc-950 bg-brand-primary rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-offset-2 focus:ring-offset-black transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
+            disabled={loading || numeroDocumento.length < 7 || !password}
+            className="w-full flex items-center justify-center gap-2 py-4 font-bold text-black bg-[#02D7E5] hover:bg-[#02D7E5]/90 rounded-xl transition-all disabled:opacity-50 shadow-[0_0_15px_rgba(2,215,229,0.2)]"
           >
-            {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Ingresar'}
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (
+              <>Iniciar Sesión <ArrowRight className="w-4 h-4" /></>
+            )}
           </button>
         </form>
 
-        <div className="flex flex-col items-center space-y-4 pt-6 border-t border-zinc-900">
-          <Link href="/forgot-password" className="text-sm font-medium text-zinc-400 hover:text-white transition-colors">
-            ¿Olvidaste tu contraseña?
-          </Link>
-          <Link href="/register" className="text-sm font-medium text-zinc-400 hover:text-white transition-colors">
-            No tengo cuenta, Registrarme
+        <div className="flex flex-col items-center pt-6 border-t border-zinc-900">
+          <Link href="/registro" className="text-sm font-medium text-zinc-400 hover:text-white transition-colors flex items-center gap-1">
+            ¿Eres nuevo? <span className="text-[#02D7E5]">Regístrate aquí</span>
           </Link>
         </div>
       </div>

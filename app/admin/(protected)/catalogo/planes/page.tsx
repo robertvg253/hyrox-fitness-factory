@@ -121,7 +121,7 @@ export default function PlanesCatalogPage() {
                       <span className="font-mono text-emerald-400 font-bold text-base">${plan.precio_usd}</span>
                     </td>
                     <td className="py-4 text-zinc-300">
-                      {plan.frecuencia} Mes{plan.frecuencia !== 1 ? 'es' : ''}
+                      {plan.tipo === 'SESIONES' ? `${plan.sesiones_total} Sesiones` : 'Mensual'}
                     </td>
                     <td className="py-4">
                       <div className="flex flex-wrap gap-1 max-w-[200px]">

@@ -26,7 +26,10 @@ export default async function PerfilAtletaPage() {
       email,
       suscripciones (
         estado,
-        fecha_corte
+        fecha_corte,
+        planes (
+          nombre
+        )
       )
     `)
     .eq('id', user.id)
@@ -47,6 +50,7 @@ export default async function PerfilAtletaPage() {
   const fechaCorte = suscripcionActiva?.fecha_corte 
     ? formatCaracasDate(suscripcionActiva.fecha_corte)
     : 'No disponible'
+  const nombrePlan = suscripcionActiva?.planes?.nombre || 'No tienes ningún plan activo'
 
   return (
     <div className="min-h-screen bg-black text-white pb-24">
@@ -96,6 +100,13 @@ export default async function PerfilAtletaPage() {
                 {estado}
               </span>
             </div>
+            
+            <div className="space-y-1 mb-4">
+              <p className="text-xs text-zinc-400 font-medium">Plan Activo</p>
+              <div className="flex items-center gap-2 text-white">
+                <p className="text-sm font-semibold tracking-wide">{nombrePlan}</p>
+              </div>
+            </div>
 
             <div className="space-y-1">
               <p className="text-xs text-zinc-400 font-medium">Próximo Vencimiento</p>
@@ -104,6 +115,19 @@ export default async function PerfilAtletaPage() {
                 <p className="text-lg font-semibold tracking-wide">{fechaCorte}</p>
               </div>
             </div>
+          </div>
+        </section>
+
+        {/* Sección Facturación */}
+        <section className="space-y-4">
+          <h3 className="text-sm uppercase tracking-widest text-zinc-500 font-semibold px-1">
+            Facturación
+          </h3>
+          <div className="bg-zinc-900 border border-white/10 rounded-2xl p-5 shadow-lg relative flex flex-col items-center justify-center opacity-70">
+            <span className="px-3 py-1 bg-brand-primary/20 text-brand-primary rounded-full text-xs font-bold uppercase tracking-widest border border-brand-primary/30 mb-2">
+              Próximamente
+            </span>
+            <p className="text-sm text-zinc-400 text-center font-medium">Historial de pagos y facturas en desarrollo.</p>
           </div>
         </section>
 

@@ -46,7 +46,7 @@ export async function procesarRenovacion(
   // 2. Ejecución del Time-Stacking (Caso Éxito)
   const { data: suscripcion, error: subError } = await supabase
     .from('suscripciones')
-    .select('id, estado, fecha_corte')
+    .select('id, estado, fecha_corte, plan_id, planes (tipo, sesiones_total)')
     .eq('id', suscripcion_id)
     .single();
 
@@ -66,12 +66,24 @@ export async function procesarRenovacion(
   // Time-Stacking: Sumar 1 mes exacto de forma segura en UTC
   nuevaFechaCorte.setUTCMonth(nuevaFechaCorte.getUTCMonth() + 1);
 
+  const isSesiones = suscripcion.planes?.tipo === 'SESIONES';
+  const payloadToUpdate: any = {
+    estado: 'ACTIVO',
+  };
+
+  if (isSesiones) {
+    payloadToUpdate.sesiones_restantes = suscripcion.planes?.sesiones_total || 0;
+    // La fecha_corte puede mantenerse o no actualizarse en planes por sesiones, 
+    // pero mantendremos la proyección en caso de plan mixto o reglas futuras.
+    payloadToUpdate.fecha_corte = nuevaFechaCorte.toISOString();
+  } else {
+    payloadToUpdate.fecha_corte = nuevaFechaCorte.toISOString();
+    payloadToUpdate.sesiones_restantes = null;
+  }
+
   const { error: updateSubError } = await supabase
     .from('suscripciones')
-    .update({
-      estado: 'ACTIVO',
-      fecha_corte: nuevaFechaCorte.toISOString(),
-    })
+    .update(payloadToUpdate)
     .eq('id', suscripcion.id);
 
   if (updateSubError) {

@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { createClient as createServerClient } from '@/src/utils/supabase/server';
 import { EstadoOrden, EstadoSuscripcion } from '@/src/types';
 import { registrarEvento } from '@/src/services/logger';
+import { getCaracasMidnightUTC } from '@/src/utils/timezone';
 
 export async function POST(request: Request) {
   try {
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
     // Paso A: Consulta la orden_cobro
     const { data: orden, error: ordenErr } = await supabase
       .from('ordenes_cobro')
-      .select('id, estado, suscripcion_id, metadata, usuario_id')
+      .select('id, estado, suscripcion_id, metadata, usuario_id, suscripciones(plan_id, fecha_corte, sesiones_restantes, planes(tipo, sesiones_total))')
       .eq('id', orden_id)
       .single();
 
@@ -50,7 +51,6 @@ export async function POST(request: Request) {
     const metadataActual = orden.metadata || {};
 
     if (accion === 'APROBAR') {
-      // Paso B: Aprobar la orden
       const nuevaMetadata = {
         ...metadataActual,
         conciliado_por: adminIdReal,
@@ -72,26 +72,68 @@ export async function POST(request: Request) {
 
       await registrarEvento('ordenes_cobro', orden_id, 'CONCILIACION_APROBADA', { 
         admin_id: adminIdReal, 
-        admin_nombre: adminNombreReal 
+        admin_nombre: adminNombreReal,
+        nota: 'Conciliación aprobada (el tiempo fue otorgado en la emisión)'
       });
 
-      return NextResponse.json({ message: 'Orden conciliada y APROBADA exitosamente' }, { status: 200 });
+      return NextResponse.json({ message: 'Orden conciliada y APROBADA exitosamente.' }, { status: 200 });
 
     } else if (accion === 'RECHAZAR') {
       // Paso C: Rechazar la orden y hacer Rollback a la suscripción
-      const fechaCorteAnterior = metadataActual.fecha_corte_anterior;
+      let fechaRevertida: Date;
 
-      if (!fechaCorteAnterior) {
-        throw new Error('No se puede hacer rollback: fecha_corte_anterior no encontrada en metadata de la orden.');
+      if (metadataActual.fecha_corte_anterior) {
+        fechaRevertida = new Date(metadataActual.fecha_corte_anterior);
+      } else {
+        // Fallback Legacy
+        const { data: subActual } = await supabase
+          .from('suscripciones')
+          .select('fecha_corte')
+          .eq('id', orden.suscripcion_id)
+          .single();
+          
+        if (subActual?.fecha_corte) {
+          fechaRevertida = new Date(subActual.fecha_corte);
+          fechaRevertida.setUTCMonth(fechaRevertida.getUTCMonth() - 1);
+        } else {
+          fechaRevertida = new Date();
+        }
+      }
+
+      const now = new Date();
+      let nuevoEstado = fechaRevertida > now ? 'ACTIVO' : 'INACTIVO';
+
+      const isSesiones = orden.suscripciones?.planes?.tipo === 'SESIONES';
+      let sesionesRevertidas: number | null = null;
+      
+      if (isSesiones) {
+        if (metadataActual.sesiones_anteriores !== undefined && metadataActual.sesiones_anteriores !== null) {
+          sesionesRevertidas = metadataActual.sesiones_anteriores;
+        } else {
+          // Fallback legacy sesiones
+          const sesionesActuales = orden.suscripciones?.sesiones_restantes || 0;
+          const sesionesPlan = orden.suscripciones?.planes?.sesiones_total || 0;
+          sesionesRevertidas = Math.max(0, sesionesActuales - sesionesPlan);
+        }
+        
+        if (sesionesRevertidas <= 0) {
+          nuevoEstado = 'INACTIVO';
+        }
+      }
+
+      const payloadRollback: any = {
+        estado: nuevoEstado as EstadoSuscripcion,
+        fecha_corte: fechaRevertida.toISOString()
+      };
+      
+      if (isSesiones && sesionesRevertidas !== null) {
+        payloadRollback.sesiones_restantes = sesionesRevertidas;
       }
 
       // 1. Rollback a la suscripción
       const { error: subRollbackErr } = await supabase
         .from('suscripciones')
-        .update({
-          estado: 'INACTIVO' as EstadoSuscripcion,
-          fecha_corte: fechaCorteAnterior
-        })
+        .update(payloadRollback)
         .eq('id', orden.suscripcion_id);
 
       if (subRollbackErr) {
@@ -123,7 +165,7 @@ export async function POST(request: Request) {
       await registrarEvento('ordenes_cobro', orden_id, 'CONCILIACION_RECHAZADA', { 
         admin_id: adminIdReal, 
         admin_nombre: adminNombreReal, 
-        fecha_restaurada: fechaCorteAnterior 
+        fecha_restaurada: fechaRevertida.toISOString() 
       });
 
       return NextResponse.json({ message: 'Orden RECHAZADA y suscripción revertida exitosamente' }, { status: 200 });

@@ -63,6 +63,8 @@ export default async function AuditoriaPage() {
     switch (accion) {
       case 'EMISION_COBRO':
         return 'bg-blue-500/10 text-blue-500 border-blue-500/20';
+      case 'PAGO_REGISTRADO':
+        return 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20';
       case 'PAGO_APROBADO':
         return 'bg-green-500/10 text-green-500 border-green-500/20';
       case 'RENOVACION_ESTADO':

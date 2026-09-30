@@ -15,11 +15,11 @@ export async function GET(request: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    // Calcular la fecha límite (hace 24 horas)
+    // Calcular la fecha límite (hace 72 horas)
     const limitDate = new Date();
-    limitDate.setHours(limitDate.getHours() - 24);
+    limitDate.setHours(limitDate.getHours() - 72);
 
-    // Buscar órdenes en estado POR_CONCILIAR que tengan más de 24 horas
+    // Buscar órdenes en estado POR_CONCILIAR que tengan más de 72 horas
     const { data: ordenes, error: ordenesErr } = await supabase
       .from('ordenes_cobro')
       .select('id, suscripcion_id, metadata, created_at')
@@ -32,7 +32,7 @@ export async function GET(request: Request) {
     }
 
     if (!ordenes || ordenes.length === 0) {
-      return NextResponse.json({ message: 'No hay órdenes excedidas (Timeout 24h).' });
+      return NextResponse.json({ message: 'No hay órdenes excedidas (Timeout 72h).' });
     }
 
     let procesadas = 0;
@@ -63,7 +63,7 @@ export async function GET(request: Request) {
         const nuevaMetadata = {
           ...metadataActual,
           rechazado_por_nombre: 'Sistema Automático (Centinela)',
-          motivo: 'Timeout 24h excedido',
+          motivo: 'Timeout 72h excedido',
           rechazado_en: new Date().toISOString()
         };
 
@@ -82,7 +82,7 @@ export async function GET(request: Request) {
         // 3. Registrar en bitácora de auditoría
         await registrarEvento('ordenes_cobro', orden.id, 'CONCILIACION_RECHAZADA', {
           admin_nombre: 'Centinela Automático',
-          motivo: 'Timeout 24h excedido',
+          motivo: 'Timeout 72h excedido',
           fecha_restaurada: nuevaFechaCorte
         });
 

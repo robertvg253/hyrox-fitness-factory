@@ -58,7 +58,8 @@ export async function GET(request: Request) {
           continue;
         }
 
-        const monto = sub.planes?.precio_usd || 0;
+        const planData = Array.isArray(sub.planes) ? sub.planes[0] : sub.planes;
+        const monto = planData?.precio_usd || 0;
         
         if (monto <= 0) {
           console.warn(`[CRON Emisor] Suscripción ${sub.id}: Plan base USD es 0 o inválido, omitiendo.`);

@@ -46,12 +46,15 @@ export async function POST(request: Request) {
         console.error(`[Webhook R4] Orden no encontrada para transaction_id ${transactionId}:`, ordenError?.message);
       } else if (orden.estado === 'PENDIENTE' || orden.estado === 'ENVIADO') {
         
-        // 3. Actualizar la Orden a PAGADA
+        // 3. Actualizar la Orden
         const currentMetadata = typeof orden.metadata === 'object' && orden.metadata !== null ? orden.metadata : {};
+        const isMixtoR4 = currentMetadata.provider === 'MIXTO_R4';
+        const nuevoEstado = isMixtoR4 ? 'POR_CONCILIAR' : 'PAGADA';
+
         const { error: updateOrdenError } = await supabase
           .from('ordenes_cobro')
           .update({
-            estado: 'PAGADA',
+            estado: nuevoEstado,
             r4_bank_reference: body.bank_reference || null,
             metadata: { 
               ...currentMetadata,
@@ -65,39 +68,48 @@ export async function POST(request: Request) {
         if (updateOrdenError) {
           console.error(`[Webhook R4] Error actualizando orden ${orden.id}:`, updateOrdenError.message);
         } else {
-          console.log(`[Webhook R4] Orden ${orden.id} actualizada a PAGADA.`);
+          console.log(`[Webhook R4] Orden ${orden.id} actualizada a ${nuevoEstado}.`);
           
-          await registrarEvento('ordenes_cobro', orden.id, 'PAGO_APROBADO', {
+          await registrarEvento('ordenes_cobro', orden.id, isMixtoR4 ? 'COBRO_MOVIL_PARCIAL_EXITO' : 'PAGO_APROBADO', {
             transaction_id: transactionId,
-            bank_reference: body.bank_reference
+            bank_reference: body.bank_reference,
+            nota: isMixtoR4 ? 'Porción Cobro Móvil aprobada. Esperando conciliación manual.' : 'Cobro móvil aprobado.'
           });
 
           // 4. Ejecución del Time-Stacking o Activación Inicial
           if (orden.suscripcion_id) {
-            const { data: sub } = await supabase.from('suscripciones').select('estado').eq('id', orden.suscripcion_id).single()
-            
-            if (sub && sub.estado === 'INACTIVO') {
-              const fechaCorte = new Date()
-              fechaCorte.setUTCMonth(fechaCorte.getUTCMonth() + 1)
-              
+            if (isMixtoR4) {
+              // ESTADO DE GRACIA: Otorgar acceso temporal sin consolidar la fecha de corte final
               await supabase.from('suscripciones').update({ 
-                estado: 'ACTIVO',
-                fecha_corte: fechaCorte.toISOString()
-              }).eq('id', orden.suscripcion_id)
-
-              console.log(`[Webhook R4] Suscripción ${orden.suscripcion_id} activada exitosamente tras cobro móvil.`)
+                estado: 'ACTIVO'
+              }).eq('id', orden.suscripcion_id);
+              console.log(`[Webhook R4] Suscripción ${orden.suscripcion_id} en ESTADO DE GRACIA (Pago Mixto).`);
             } else {
-              const montoUsd = Number(orden.monto);
-              const tasaR4 = Number(body.exchange_rate) || 1; // Ajustar dependiendo del formato de R4
-              const montoPagadoVes = Number(body.amount?.value || body.amount) || (montoUsd * tasaR4); // Extraer pago real VES
+              const { data: sub } = await supabase.from('suscripciones').select('estado').eq('id', orden.suscripcion_id).single()
+              
+              if (sub && sub.estado === 'INACTIVO') {
+                const fechaCorte = new Date()
+                fechaCorte.setUTCMonth(fechaCorte.getUTCMonth() + 1)
+                
+                await supabase.from('suscripciones').update({ 
+                  estado: 'ACTIVO',
+                  fecha_corte: fechaCorte.toISOString()
+                }).eq('id', orden.suscripcion_id)
 
-              await procesarRenovacion(
-                orden.id,
-                orden.suscripcion_id,
-                montoUsd,
-                tasaR4,
-                montoPagadoVes
-              );
+                console.log(`[Webhook R4] Suscripción ${orden.suscripcion_id} activada exitosamente tras cobro móvil.`)
+              } else {
+                const montoUsd = Number(orden.monto);
+                const tasaR4 = Number(body.exchange_rate) || 1; 
+                const montoPagadoVes = Number(body.amount?.value || body.amount) || (montoUsd * tasaR4);
+
+                await procesarRenovacion(
+                  orden.id,
+                  orden.suscripcion_id,
+                  montoUsd,
+                  tasaR4,
+                  montoPagadoVes
+                );
+              }
             }
           }
 

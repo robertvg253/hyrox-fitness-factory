@@ -11,7 +11,8 @@ import {
   ChevronDown, 
   Box,
   CalendarDays,
-  MapPin
+  MapPin,
+  TrendingUp
 } from 'lucide-react';
 import { createClient } from '@/src/utils/supabase/client';
 import { useState, useEffect } from 'react';
@@ -40,6 +41,7 @@ const menuGroups: MenuGroup[] = [
     title: 'Principal',
     items: [
       { name: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
+      { name: 'Indicadores (KPIs)', href: '/admin/kpis', icon: TrendingUp },
     ]
   },
   {
@@ -55,14 +57,14 @@ const menuGroups: MenuGroup[] = [
         ] 
       },
       { name: 'Calendario', href: '/admin/calendario', icon: CalendarDays },
-      { name: 'Control de Aforo', href: '/admin/aforo', icon: UserCheck },
       { 
         name: 'Finanzas & Cobranza', 
         icon: CreditCard,
         subItems: [
-          { name: 'Dashboard', href: '/admin/dashboard/finanzas' },
-          { name: 'Auditoría', href: '/admin/dashboard/finanzas/auditoria' },
-          { name: 'Webhooks', href: '/admin/dashboard/finanzas/webhooks' }
+          { name: 'Dashboard', href: '/admin/finanzas/dashboard' },
+          { name: 'Cobros', href: '/admin/finanzas/cobros' },
+          { name: 'Auditoría', href: '/admin/finanzas/cobros/auditoria' },
+          { name: 'Webhooks', href: '/admin/finanzas/cobros/webhooks' }
         ]
       },
       { name: 'Usuarios', href: '/admin/usuarios', icon: Users },

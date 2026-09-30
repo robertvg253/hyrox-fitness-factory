@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { Search, UserPlus } from 'lucide-react'
 import { formatCaracasDate } from '@/src/utils/timezone'
 import ModalCobroManual from '@/components/admin/ModalCobroManual'
@@ -17,6 +18,7 @@ type Suscripcion = {
   id: string;
   estado: string;
   fecha_corte: string;
+  sesiones_restantes?: number | null;
   plan_id?: string;
   planes?: {
     id: string;
@@ -31,6 +33,7 @@ type Usuario = {
   id: string;
   nombre_completo: string;
   telefono: string;
+  etiqueta_lead?: string | null;
   suscripciones: Suscripcion[];
 }
 
@@ -40,6 +43,9 @@ interface UsuariosClientProps {
 }
 
 export default function UsuariosClient({ initialUsuarios, activeSedeId }: UsuariosClientProps) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  
   const [searchTerm, setSearchTerm] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isNuevoAtletaModalOpen, setIsNuevoAtletaModalOpen] = useState(false)
@@ -57,7 +63,9 @@ export default function UsuariosClient({ initialUsuarios, activeSedeId }: Usuari
   }
 
   const handleModalSuccess = () => {
-    window.location.reload()
+    startTransition(() => {
+      router.refresh()
+    })
   }
 
   const handleNuevoAtletaSuccess = (usuarioCreado: any) => {
@@ -180,6 +188,10 @@ export default function UsuariosClient({ initialUsuarios, activeSedeId }: Usuari
                       <td className="p-4 align-middle">
                         {!subPrincipal ? (
                           <span className="text-zinc-600 text-xs font-medium">Sin suscripción</span>
+                        ) : (usuario.etiqueta_lead === 'PRUEBA_PENDIENTE' || (subPrincipal.planes?.nombre || '').toLowerCase().includes('prueba') || (subPrincipal.planes?.nombre || '').toLowerCase().includes('cortes')) ? (
+                          <span className="inline-flex items-center rounded-full bg-purple-500/10 px-2.5 py-0.5 text-xs font-semibold text-purple-400 border border-purple-500/20 whitespace-nowrap">
+                            CLASE DE PRUEBA
+                          </span>
                         ) : subPrincipal.estado === 'ACTIVO' ? (
                           <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-500 border border-emerald-500/20">
                             ACTIVO
@@ -191,9 +203,11 @@ export default function UsuariosClient({ initialUsuarios, activeSedeId }: Usuari
                         )}
                       </td>
                       <td className="p-4 align-middle text-zinc-300 text-sm">
-                        {subPrincipal?.fecha_corte 
-                          ? formatCaracasDate(subPrincipal.fecha_corte)
-                          : '-'}
+                        {subPrincipal?.sesiones_restantes != null 
+                          ? <span className="inline-flex items-center rounded-full bg-purple-500/10 px-2.5 py-0.5 text-xs font-semibold text-purple-400 border border-purple-500/20">{subPrincipal.sesiones_restantes} Sesiones Restantes</span>
+                          : subPrincipal?.fecha_corte 
+                            ? formatCaracasDate(subPrincipal.fecha_corte)
+                            : '-'}
                       </td>
                       <td className="p-4 align-middle">
                         {enTransito ? (
@@ -205,19 +219,19 @@ export default function UsuariosClient({ initialUsuarios, activeSedeId }: Usuari
                         )}
                       </td>
                       <td className="p-4 align-middle">
-                        {subPrincipal ? (
+                        {(!subPrincipal || (usuario.etiqueta_lead === 'PRUEBA_PENDIENTE' || (subPrincipal.planes?.nombre || '').toLowerCase().includes('prueba') || (subPrincipal.planes?.nombre || '').toLowerCase().includes('cortes'))) ? (
                           <button
-                            onClick={() => handleOpenModal(subPrincipal.id, subPrincipal.planes?.precio_usd || 30)}
-                            className="px-3 py-1 bg-[#02D7E5]/10 hover:bg-[#02D7E5]/20 text-[#02D7E5] text-xs font-semibold rounded-lg transition-colors border border-[#02D7E5]/20"
+                            onClick={() => handleOpenAsignarPlan(usuario.id, usuario.nombre_completo)}
+                            className="px-3 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-semibold rounded-lg transition-colors border border-emerald-500/20 whitespace-nowrap"
                           >
-                            Pago Manual
+                            Crear Suscripción
                           </button>
                         ) : (
                           <button
-                            onClick={() => handleOpenAsignarPlan(usuario.id, usuario.nombre_completo)}
-                            className="px-3 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-semibold rounded-lg transition-colors border border-emerald-500/20"
+                            onClick={() => handleOpenModal(subPrincipal.id, subPrincipal.planes?.precio_usd || 30)}
+                            className="px-3 py-1 bg-[#02D7E5]/10 hover:bg-[#02D7E5]/20 text-[#02D7E5] text-xs font-semibold rounded-lg transition-colors border border-[#02D7E5]/20 whitespace-nowrap"
                           >
-                            Crear Suscripción
+                            Pago Manual
                           </button>
                         )}
                       </td>

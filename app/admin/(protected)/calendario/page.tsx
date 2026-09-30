@@ -7,6 +7,8 @@ import * as z from "zod";
 import { Loader2, AlertCircle, Pencil, Trash2, X, User, Dumbbell, Clock, Star, Copy } from "lucide-react";
 import { createClient } from "@/src/utils/supabase/client";
 import { useTenant } from "../components/TenantProvider";
+import RecepcionPanel from "./RecepcionPanel";
+import { useRouter } from "next/navigation";
 
 // Helper para Formato AM/PM
 const formatAMPM = (date: Date) => {
@@ -93,6 +95,7 @@ export default function CalendarioPage() {
   const [currentDay, setCurrentDay] = useState<Date>(new Date());
 
   const supabase = createClient();
+  const router = useRouter();
 
   const getStartOfWeek = (d: Date) => {
     const date = new Date(d);
@@ -159,7 +162,7 @@ export default function CalendarioPage() {
       const [clasesRes, disciplinasRes, instructoresRes] = await Promise.all([
         supabase
           .from("clases_programadas")
-          .select("*, disciplinas(nombre), instructores(nombre)")
+          .select("*, disciplinas(nombre), instructores(nombre), reservas(id, clase_id, usuario_id, estado_reserva, asistio_fisicamente, es_clase_prueba, created_at, usuarios(id, nombre_completo, email, telefono, suscripciones(id, estado, sesiones_restantes, planes(tipo))))")
           .eq("sede_id", activeSede.id)
           .order("fecha_hora_inicio", { ascending: true }),
         supabase
@@ -189,6 +192,27 @@ export default function CalendarioPage() {
 
   useEffect(() => {
     fetchData();
+  }, [activeSede?.id]);
+
+  // Supabase Realtime para reservas
+  useEffect(() => {
+    if (!activeSede) return;
+    
+    const channel = supabase
+      .channel('custom-all-channel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'reservas' },
+        () => {
+          fetchData();
+          router.refresh();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [activeSede?.id]);
 
   const classesThisWeek = useMemo(() => {
@@ -500,6 +524,10 @@ export default function CalendarioPage() {
                 {isSpecial ? clase.nombre_clase : clase.disciplinas?.nombre}
               </p>
               
+              <div className={`pl-1.5 font-medium ${showDetails ? 'text-[10px] mb-1' : 'text-[9px]'} ${isSpecial ? 'text-amber-500/80' : 'text-[#02D7E5]/80'}`}>
+                {((clase as any).reservas || []).filter((r: any) => r.estado_reserva !== 'CANCELADA').length} de {clase.aforo_maximo} cupos
+              </div>
+              
               {showDetails && (
                 <>
                   <div className={`flex items-center text-[10px] mb-1 pl-1.5 ${isSpecial ? 'text-amber-400/80' : 'text-[#02D7E5]'}`}>
@@ -511,6 +539,24 @@ export default function CalendarioPage() {
                     <div className="flex items-center text-[10px] text-gray-400 truncate pl-1.5 hidden sm:flex">
                       <User className="w-3 h-3 mr-1.5 opacity-70" />
                       {clase.instructores?.nombre || 'Sin asignar'}
+                    </div>
+                  )}
+                  
+                  {clase.reservas && (
+                    <div className="mt-1 pl-1.5 flex flex-col gap-0.5">
+                      {clase.reservas
+                        .filter((r: any) => r.estado_reserva !== 'CANCELADA')
+                        .slice(0, 3)
+                        .map((r: any) => (
+                          <div key={r.id} className="text-[9px] text-gray-300 truncate">
+                            • {r.usuarios?.nombre_completo?.split(' ')[0] || 'Atleta'}
+                          </div>
+                      ))}
+                      {clase.reservas.filter((r: any) => r.estado_reserva !== 'CANCELADA').length > 3 && (
+                        <div className="text-[8px] text-gray-500 italic pl-1">
+                          +{clase.reservas.filter((r: any) => r.estado_reserva !== 'CANCELADA').length - 3} más
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
@@ -1172,14 +1218,12 @@ export default function CalendarioPage() {
                 </div>
               </div>
 
-              <div className="flex-1 bg-black/30 border border-white/5 rounded-xl flex flex-col p-5">
-                <h4 className="text-sm font-bold text-gray-300 uppercase tracking-wider mb-4 border-b border-white/5 pb-2">
-                  Lista de Participantes
-                </h4>
-                <div className="flex-1 flex items-center justify-center text-gray-500 text-center">
-                  <p>Lista de Participantes <br/>(En construcción)</p>
-                </div>
-              </div>
+              <RecepcionPanel 
+                clase={viewingClase} 
+                activeSede={activeSede} 
+                onUpdate={fetchData} 
+                onClose={() => setIsDetailsDrawerOpen(false)}
+              />
             </div>
           )}
         </div>

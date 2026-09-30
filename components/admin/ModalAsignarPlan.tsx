@@ -2,117 +2,70 @@
 
 import { useState, useEffect } from 'react'
 import { createClient } from '@/src/utils/supabase/client'
-import { MetodoPago } from '@/src/types'
-import { obtenerPlanesDisponibles, crearSuscripcionYOrden } from '@/app/admin/(protected)/planes/actions'
-import { Loader2, X, CheckCircle2 } from 'lucide-react'
-import toast from 'react-hot-toast'
+import { Loader2, PlusCircle, X } from 'lucide-react'
+import { asignarPlan } from '@/app/admin/(protected)/usuarios/actions'
+import { FormularioCobroUI, PagoDesglosadoForm } from './FormularioCobroUI'
 
 interface ModalAsignarPlanProps {
-  isOpen: boolean
-  onClose: () => void
-  usuarioId: string
-  usuarioNombre: string
-  sedeId: string | null
-  onSuccess: () => void
+  isOpen: boolean;
+  onClose: () => void;
+  usuarioId: string;
+  usuarioNombre: string;
+  sedeId: string | null;
+  onSuccess: () => void;
 }
-
-interface PagoDesglosadoForm {
-  metodo: MetodoPago
-  monto: number
-  titular: string
-  correo: string
-  banco: string
-  referencia: string
-}
-
-const METODOS_OPCIONES: { value: MetodoPago, label: string }[] = [
-  { value: 'EFECTIVO', label: 'Efectivo' },
-  { value: 'ZELLE', label: 'Zelle' },
-  { value: 'PAGO_MOVIL', label: 'Pago Móvil' },
-  { value: 'TRANSFERENCIA', label: 'Transferencia Bancaria' },
-  { value: 'PUNTO_DE_VENTA', label: 'Punto de Venta' },
-  { value: 'COBRO_MOVIL', label: 'Cobro Móvil (Automático)' },
-]
 
 export default function ModalAsignarPlan({ isOpen, onClose, usuarioId, usuarioNombre, sedeId, onSuccess }: ModalAsignarPlanProps) {
-  const [step, setStep] = useState<1 | 2>(1)
   const [planes, setPlanes] = useState<any[]>([])
   const [loadingPlanes, setLoadingPlanes] = useState(false)
-  const [selectedPlan, setSelectedPlan] = useState<any | null>(null)
+  const [selectedPlan, setSelectedPlan] = useState<string>('')
   
-  const [isMixto, setIsMixto] = useState(false)
-  const [loadingSubmit, setLoadingSubmit] = useState(false)
+  const [step, setStep] = useState(1)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  
-  const [isWaitingPayment, setIsWaitingPayment] = useState(false)
-  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null)
 
-  const defaultPago: PagoDesglosadoForm = { metodo: 'EFECTIVO', monto: 0, titular: '', correo: '', banco: '', referencia: '' }
-  
-  const [pago1, setPago1] = useState<PagoDesglosadoForm>(defaultPago)
-  const [pago2, setPago2] = useState<PagoDesglosadoForm>(defaultPago)
+  // Step 2 state
+  const defaultPago: PagoDesglosadoForm = { metodo: 'EFECTIVO', monto: 0, titular: '', correo: '', banco: '', referencia: '' };
+  const [isMixto, setIsMixto] = useState(false);
+  const [pago1, setPago1] = useState<PagoDesglosadoForm>(defaultPago);
+  const [pago2, setPago2] = useState<PagoDesglosadoForm>({ ...defaultPago, monto: 0 });
 
   useEffect(() => {
     if (isOpen) {
-      setStep(1)
-      setSelectedPlan(null)
-      setIsMixto(false)
+      loadPlanes()
+      setSelectedPlan('')
       setError(null)
-      setIsWaitingPayment(false)
-      setPendingOrderId(null)
-      fetchPlanes()
-    }
-  }, [isOpen, sedeId])
-
-  useEffect(() => {
-    if (!isWaitingPayment || !pendingOrderId) return;
-    
-    const supabase = createClient();
-    const channel = supabase.channel(`orden-update-${pendingOrderId}`)
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'ordenes_cobro',
-        filter: `id=eq.${pendingOrderId}`
-      }, (payload) => {
-        const estado = payload.new.estado;
-        if (estado === 'PAGADA') {
-          toast.success('Cobro exitoso. Suscripción activada.');
-          onSuccess();
-          onClose();
-        } else if (estado === 'RECHAZADA' || estado === 'FALLIDA') {
-          toast.error('El cobro fue rechazado. Verifique y reintente.');
-          setIsWaitingPayment(false);
-          setPendingOrderId(null);
-        }
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    }
-  }, [isWaitingPayment, pendingOrderId, onSuccess, onClose])
-
-  useEffect(() => {
-    if (selectedPlan) {
-      setPago1({ ...defaultPago, monto: selectedPlan.precio_usd })
+      setStep(1)
+      setIsMixto(false)
+      setPago1(defaultPago)
       setPago2({ ...defaultPago, monto: 0 })
     }
-  }, [selectedPlan])
+  }, [isOpen])
 
-  const fetchPlanes = async () => {
+  const loadPlanes = async () => {
     setLoadingPlanes(true)
     try {
-      const res = await obtenerPlanesDisponibles(sedeId)
-      if (res.success) {
-        // Ordenar en frontend ya que quitamos el order del backend
-        const planesOrdenados = (res.data || []).sort((a: any, b: any) => a.precio_usd - b.precio_usd)
-        setPlanes(planesOrdenados)
-      } else {
-        setPlanes([])
-      }
-    } catch (err) {
-      toast.error('Error cargando planes')
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from('planes')
+        .select('id, nombre, precio_usd, tipo, sesiones_total, sedes')
+        .eq('estado', 'ACTIVO')
+        .gt('precio_usd', 0)
+        .order('precio_usd', { ascending: true })
+      
+      if (error) throw error
+      
+      // Filtrar por sede (opcional si son globales)
+      const planesFiltrados = (data || []).filter(p => {
+        if (!p.sedes || p.sedes.length === 0) return true
+        if (sedeId && p.sedes.includes(sedeId)) return true
+        return false
+      })
+
+      setPlanes(planesFiltrados)
+    } catch (err: any) {
+      console.error(err)
+      setError('Error al cargar catálogo de planes.')
     } finally {
       setLoadingPlanes(false)
     }
@@ -120,56 +73,47 @@ export default function ModalAsignarPlan({ isOpen, onClose, usuarioId, usuarioNo
 
   if (!isOpen) return null
 
-  const handleSelectPlan = (plan: any) => {
-    setSelectedPlan(plan)
-    setStep(2)
-  }
-
-  const handleValidacion = () => {
-    if (!selectedPlan) throw new Error("Debe seleccionar un plan.")
-    const precioPlan = selectedPlan.precio_usd
-    const total = pago1.monto + (isMixto ? pago2.monto : 0)
-    
-    if (total < precioPlan) {
-      throw new Error(`El monto total ($${total}) no puede ser menor al precio del plan ($${precioPlan}).`)
-    }
-
-    const validarCampos = (p: PagoDesglosadoForm, index: number) => {
-      if (p.metodo === 'ZELLE') {
-        if (!p.titular.trim()) throw new Error(`[Pago ${index}] El Nombre Titular es obligatorio para Zelle.`)
-        if (!p.correo.trim()) throw new Error(`[Pago ${index}] El Correo es obligatorio para Zelle.`)
-        if (!p.referencia.trim()) throw new Error(`[Pago ${index}] La referencia es obligatoria para Zelle.`)
-      }
-      if (p.metodo === 'PAGO_MOVIL' || p.metodo === 'TRANSFERENCIA') {
-        if (!p.banco.trim()) throw new Error(`[Pago ${index}] El Banco es obligatorio.`)
-        if (!p.titular.trim()) throw new Error(`[Pago ${index}] Cédula/Teléfono es obligatorio.`)
-        if (!p.referencia.trim()) throw new Error(`[Pago ${index}] La referencia es obligatoria.`)
-      }
-    }
-
-    validarCampos(pago1, 1)
-    if (isMixto) {
-      if (pago2.monto <= 0) throw new Error("El monto del Método 2 debe ser mayor a 0.")
-      validarCampos(pago2, 2)
-    }
-  }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setLoadingSubmit(true)
+    if (!selectedPlan) {
+      setError('Debes seleccionar un plan.')
+      return
+    }
+
+    if (step === 1) {
+      const planElegido = planes.find(p => p.id === selectedPlan)
+      if (planElegido) {
+        setPago1({ ...defaultPago, monto: planElegido.precio_usd })
+      }
+      setStep(2)
+      return
+    }
+
+    setIsSubmitting(true)
     setError(null)
 
     try {
-      const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
-      
-      const responsableId = session?.user?.id || 'sin-id'
-      const responsableNombre = session?.user?.user_metadata?.name || session?.user?.email || 'Usuario Desconocido'
+      const planData = planes.find(p => p.id === selectedPlan)
 
-      handleValidacion()
+      // Validaciones locales antes de procesar
+      const total = pago1.monto + (isMixto ? pago2.monto : 0);
+      if (Math.abs(total - planData.precio_usd) > 0.01) {
+        setError(`La suma de los pagos ($${total}) debe ser exactamente igual al precio del plan ($${planData.precio_usd}).`)
+        setIsSubmitting(false)
+        return
+      }
 
-      const pagos_desglosados = []
-      
+      // 1. Asignar el Plan (Crea Suscripción INACTIVA)
+      const res = await asignarPlan(usuarioId, selectedPlan, sedeId)
+      if (!res.success || !res.data) {
+        setError(res.error || 'Fallo interno al asignar.')
+        setIsSubmitting(false)
+        return
+      }
+
+      const newSubId = res.data.id
+
+      // 2. Registrar el Cobro Manual
       const cleanPago = (p: PagoDesglosadoForm) => ({
         metodo: p.metodo,
         monto: p.monto,
@@ -177,136 +121,59 @@ export default function ModalAsignarPlan({ isOpen, onClose, usuarioId, usuarioNo
         correo: p.correo.trim() || undefined,
         banco: p.banco.trim() || undefined,
         referencia: p.referencia.trim() || undefined,
-      })
+      });
 
-      pagos_desglosados.push(cleanPago(pago1))
-      if (isMixto) pagos_desglosados.push(cleanPago(pago2))
-
-      const totalMonto = pagos_desglosados.reduce((acc, p) => acc + p.monto, 0)
-      const metodoPrincipal = isMixto ? 'MIXTO' : pago1.metodo
-
-      const res = await crearSuscripcionYOrden({
-        usuario_id: usuarioId,
-        plan_id: selectedPlan.id,
-        monto: totalMonto,
-        metodo_pago: metodoPrincipal,
-        referencia: isMixto ? 'MÚLTIPLES' : (pagos_desglosados[0].referencia || ''),
-        pagos_desglosados,
-        responsable_id: responsableId,
-        responsable_nombre: responsableNombre
-      })
-
-      if (!res.success) throw new Error(res.error)
-
-      if (res.type === 'API_PENDING') {
-        setPendingOrderId(res.ordenId)
-        setIsWaitingPayment(true)
-        return
+      const pagos_desglosados = [];
+      pagos_desglosados.push(cleanPago(pago1));
+      if (isMixto) {
+        pagos_desglosados.push(cleanPago(pago2));
       }
 
-      toast.success('Suscripción y pago registrados exitosamente')
-      onSuccess()
-      onClose()
+      const metodoPrincipal = isMixto ? 'MIXTO' : pago1.metodo;
+
+      const cobroPayload = {
+        suscripcion_id: newSubId,
+        monto: total,
+        metodo_pago: metodoPrincipal,
+        referencia: isMixto ? 'MÚLTIPLES' : pagos_desglosados[0].referencia || 'S/R',
+        pagos_desglosados: pagos_desglosados,
+        responsable_id: 'admin', // Podríamos extraerlo de la sesión, pero el webhook o el admin-endpoint lo manejará
+        responsable_nombre: 'Administrador'
+      }
+
+      const cobroRes = await fetch('/api/finanzas/cobro-manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cobroPayload)
+      })
+
+      const cobroData = await cobroRes.json()
+
+      if (!cobroRes.ok) {
+        setError(cobroData.error || 'Plan asignado, pero falló el cobro manual.')
+        // Opcionalmente no cerramos el modal para que el usuario pueda reintentar o verlo
+      } else {
+        onSuccess()
+        onClose()
+      }
     } catch (err: any) {
-      setError(err.message)
+      setError('Error de conexión con el servidor.')
     } finally {
-      setLoadingSubmit(false)
+      setIsSubmitting(false)
     }
   }
 
-  // --- RENDERS --- //
-  const renderCamposDinamicos = (pago: PagoDesglosadoForm, setPago: React.Dispatch<React.SetStateAction<PagoDesglosadoForm>>, labelPrefix: string) => (
-      <div className="space-y-3 bg-white/5 p-4 rounded-lg border border-white/10">
-        <h3 className="text-sm font-semibold text-[#02D7E5]">{labelPrefix}</h3>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-medium text-zinc-400 mb-1">Monto ($)</label>
-            <input 
-              type="number" required min="0" step="0.01"
-              className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg p-2 focus:ring-[#02D7E5] focus:border-[#02D7E5]"
-              value={pago.monto || ''}
-              onChange={e => setPago({ ...pago, monto: parseFloat(e.target.value) || 0 })}
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-zinc-400 mb-1">Método</label>
-            <select 
-              className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg p-2 focus:ring-[#02D7E5] focus:border-[#02D7E5]"
-              value={pago.metodo}
-              onChange={e => setPago({ ...pago, metodo: e.target.value as MetodoPago })}
-            >
-              {METODOS_OPCIONES.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-            </select>
-          </div>
-        </div>
-
-        {pago.metodo === 'ZELLE' && (
-          <div className="grid grid-cols-1 gap-3 mt-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">Nombre Titular <span className="text-red-400">*</span></label>
-                <input type="text" required
-                  className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg p-2 focus:ring-[#02D7E5] focus:border-[#02D7E5]"
-                  value={pago.titular} onChange={e => setPago({ ...pago, titular: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">Correo <span className="text-red-400">*</span></label>
-                <input type="email" required
-                  className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg p-2 focus:ring-[#02D7E5] focus:border-[#02D7E5]"
-                  value={pago.correo} onChange={e => setPago({ ...pago, correo: e.target.value })}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-zinc-400 mb-1">Referencia (últimos 6) <span className="text-red-400">*</span></label>
-              <input type="text" required
-                className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg p-2 focus:ring-[#02D7E5] focus:border-[#02D7E5]"
-                value={pago.referencia} onChange={e => setPago({ ...pago, referencia: e.target.value })}
-              />
-            </div>
-          </div>
-        )}
-
-        {(pago.metodo === 'PAGO_MOVIL' || pago.metodo === 'TRANSFERENCIA') && (
-          <div className="grid grid-cols-1 gap-3 mt-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">Banco <span className="text-red-400">*</span></label>
-                <input type="text" required
-                  className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg p-2 focus:ring-[#02D7E5] focus:border-[#02D7E5]"
-                  value={pago.banco} onChange={e => setPago({ ...pago, banco: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1">Cédula / Teléfono <span className="text-red-400">*</span></label>
-                <input type="text" required
-                  className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg p-2 focus:ring-[#02D7E5] focus:border-[#02D7E5]"
-                  value={pago.titular} onChange={e => setPago({ ...pago, titular: e.target.value })}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-zinc-400 mb-1">Referencia (últimos 6) <span className="text-red-400">*</span></label>
-              <input type="text" required
-                className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg p-2 focus:ring-[#02D7E5] focus:border-[#02D7E5]"
-                value={pago.referencia} onChange={e => setPago({ ...pago, referencia: e.target.value })}
-              />
-            </div>
-          </div>
-        )}
-      </div>
-  )
+  const selectedPlanData = planes.find(p => p.id === selectedPlan)
 
   return (
     <>
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 w-full max-w-md bg-zinc-950 border-l border-white/10 z-50 shadow-2xl flex flex-col transform transition-transform duration-300 translate-x-0">
-        
+      <div className="fixed inset-y-0 right-0 w-full max-w-md bg-zinc-950 border-l border-white/10 z-50 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
         <div className="flex flex-col h-full">
-          <div className="p-6 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
+          <div className="p-6 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-900/50 shrink-0">
             <div>
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <PlusCircle className="w-5 h-5 text-emerald-400" />
                 Asignar Plan
               </h2>
               <p className="text-sm text-zinc-400 mt-1">{usuarioNombre}</p>
@@ -316,103 +183,96 @@ export default function ModalAsignarPlan({ isOpen, onClose, usuarioId, usuarioNo
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-6">
-            {isWaitingPayment ? (
-              <div className="flex flex-col items-center justify-center h-full space-y-6">
-                <Loader2 className="w-16 h-16 text-[#02D7E5] animate-spin" />
-                <div className="text-center">
-                  <h3 className="text-xl font-bold text-white mb-2">Procesando Cobro Móvil</h3>
-                  <p className="text-sm text-zinc-400 max-w-xs mx-auto">
-                    Enviando cobro a R4. Esperando pago del atleta...
-                  </p>
-                </div>
-              </div>
-            ) : step === 1 ? (
+          <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 flex flex-col gap-5 scrollbar-thin scrollbar-thumb-white/10">
+            {step === 1 ? (
               <div className="space-y-4">
-                <h3 className="text-sm font-semibold text-zinc-300 uppercase tracking-wider mb-4">Selecciona un Plan</h3>
+                <label className="block text-sm font-medium text-zinc-400 mb-2">Selecciona un Plan Comercial</label>
                 {loadingPlanes ? (
-                  <div className="flex justify-center p-8">
-                    <Loader2 className="w-8 h-8 text-[#02D7E5] animate-spin" />
+                  <div className="h-24 bg-zinc-900 rounded-xl flex items-center justify-center border border-zinc-800">
+                    <Loader2 className="w-5 h-5 animate-spin text-zinc-500" />
                   </div>
-                ) : planes.length === 0 ? (
-                  <p className="text-zinc-500 text-center p-4">No hay planes disponibles para esta sede.</p>
                 ) : (
                   <div className="grid gap-3">
-                    {planes.map(plan => (
+                    {planes.map(p => (
                       <button
-                        key={plan.id}
-                        onClick={() => handleSelectPlan(plan)}
-                        className="flex items-center justify-between p-4 bg-zinc-900/50 hover:bg-zinc-800/80 border border-white/5 rounded-xl transition-all group text-left"
+                        key={p.id}
+                        type="button"
+                        onClick={() => setSelectedPlan(p.id)}
+                        className={`text-left p-4 rounded-xl border transition-all ${
+                          selectedPlan === p.id 
+                            ? 'bg-[#02D7E5]/10 border-[#02D7E5] shadow-[0_0_15px_rgba(2,215,229,0.15)]' 
+                            : 'bg-zinc-900 border-zinc-800 hover:border-zinc-600'
+                        }`}
                       >
-                        <div>
-                          <p className="font-bold text-white group-hover:text-[#02D7E5] transition-colors">{plan.nombre}</p>
-                          <p className="text-sm text-zinc-400">{plan.frecuencia} meses</p>
+                        <div className="flex justify-between items-center mb-1">
+                          <h3 className={`font-bold ${selectedPlan === p.id ? 'text-[#02D7E5]' : 'text-white'}`}>
+                            {p.nombre}
+                          </h3>
+                          <span className={`font-black ${selectedPlan === p.id ? 'text-[#02D7E5]' : 'text-white'}`}>
+                            ${p.precio_usd.toFixed(2)}
+                          </span>
                         </div>
-                        <div className="text-right">
-                          <p className="text-lg font-bold text-emerald-400">${plan.precio_usd}</p>
-                        </div>
+                        <p className="text-xs text-zinc-400">
+                          {p.tipo === 'SESIONES' ? `${p.sesiones_total} Sesiones` : 'Tiempo (Mensual)'}
+                        </p>
                       </button>
                     ))}
+                    {planes.length === 0 && (
+                      <div className="text-center p-4 bg-zinc-900 rounded-xl border border-zinc-800 text-zinc-500 text-sm">
+                        No hay planes comerciales disponibles en esta sede.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             ) : (
-              <form id="pago-form" onSubmit={handleSubmit} className="space-y-6">
-                <div className="flex items-center justify-between p-4 bg-zinc-900/80 rounded-xl border border-[#02D7E5]/20">
-                  <div>
-                    <p className="text-sm text-zinc-400">Plan Seleccionado</p>
-                    <p className="font-bold text-white">{selectedPlan.nombre}</p>
-                  </div>
-                  <div className="text-right flex flex-col items-end gap-1">
-                     <p className="font-bold text-[#02D7E5] text-lg">${selectedPlan.precio_usd}</p>
-                     <button type="button" onClick={() => setStep(1)} className="text-xs text-zinc-500 hover:text-white underline">Cambiar</button>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between p-3 bg-zinc-900 rounded-lg border border-white/5">
-                  <span className="text-sm font-medium text-white">Pago en múltiples métodos</span>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" className="sr-only peer" checked={isMixto} onChange={() => setIsMixto(!isMixto)} />
-                    <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#02D7E5]"></div>
-                  </label>
-                </div>
-
-                {renderCamposDinamicos(pago1, setPago1, isMixto ? 'MÉTODO 1' : 'DETALLES DEL PAGO')}
-                {isMixto && renderCamposDinamicos(pago2, setPago2, 'MÉTODO 2')}
-
-                {error && (
-                  <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-                    <p className="text-sm text-red-400 font-medium">{error}</p>
-                  </div>
-                )}
-              </form>
+              <div className="space-y-5 animate-in fade-in zoom-in-95 duration-200">
+                <FormularioCobroUI 
+                  isMixto={isMixto} 
+                  setIsMixto={setIsMixto} 
+                  pago1={pago1} 
+                  setPago1={setPago1} 
+                  pago2={pago2} 
+                  setPago2={setPago2} 
+                  precioPlan={selectedPlanData?.precio_usd || 0} 
+                />
+              </div>
             )}
-          </div>
 
-          <div className="p-6 border-t border-white/10 bg-zinc-900">
-             {isWaitingPayment ? null : step === 2 ? (
-               <>
-                 <div className="flex justify-between items-center mb-4">
-                   <span className="text-sm text-zinc-400">Total a procesar:</span>
-                   <span className={`text-xl font-bold ${(pago1.monto + (isMixto ? pago2.monto : 0)) < (selectedPlan?.precio_usd || 0) ? 'text-red-400' : 'text-emerald-400'}`}>
-                     ${(pago1.monto + (isMixto ? pago2.monto : 0)).toFixed(2)}
-                   </span>
-                 </div>
-                 <div className="flex gap-3">
-                   <button type="button" onClick={() => setStep(1)} disabled={loadingSubmit} className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-lg transition-colors disabled:opacity-50">
-                     Volver
-                   </button>
-                   <button type="submit" form="pago-form" disabled={loadingSubmit} className="flex-[2] flex items-center justify-center gap-2 py-3 bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-bold rounded-lg transition-colors disabled:opacity-50">
-                     {loadingSubmit ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Confirmar y Activar'}
-                   </button>
-                 </div>
-               </>
-             ) : step === 1 ? (
-               <button type="button" onClick={onClose} className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-lg transition-colors">
-                 Cancelar
-               </button>
-             ) : null}
-          </div>
+            {error && (
+              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+                <p className="text-sm text-red-400 font-medium">{error}</p>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-6 mt-auto border-t border-white/10">
+              {step === 2 && (
+                <button
+                  type="button" onClick={() => setStep(1)} disabled={isSubmitting}
+                  className="px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50"
+                >
+                  Atrás
+                </button>
+              )}
+              {step === 1 && (
+                <button
+                  type="button" onClick={onClose} disabled={isSubmitting}
+                  className="flex-1 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+              )}
+              <button
+                type="submit" disabled={isSubmitting || !selectedPlan || (step === 2 && Math.abs((pago1.monto + (isMixto ? pago2.monto : 0)) - (selectedPlanData?.precio_usd || 0)) > 0.01)}
+                className={`flex-[1.5] py-3 text-black font-bold rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg ${
+                  step === 1 ? 'bg-[#02D7E5] hover:bg-[#02D7E5]/90 shadow-[#02D7E5]/20' : 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20'
+                }`}
+              >
+                {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : (step === 1 ? 'Continuar' : 'Confirmar y Cobrar')}
+              </button>
+            </div>
+          </form>
+
         </div>
       </div>
     </>

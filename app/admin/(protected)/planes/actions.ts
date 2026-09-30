@@ -8,8 +8,11 @@ import { emitirCobroR4 } from '@/src/services/r4-service'
 export async function obtenerPlanesDisponibles(sedeId: string | null) {
   const supabase = await createClient()
 
-  // Extraer todos los planes sin filtros
-  const { data: planes, error } = await supabase.from('planes').select('*')
+  // Extraer todos los planes sin filtros (excepto los de precio 0 que son internos)
+  const { data: planes, error } = await supabase
+    .from('planes')
+    .select('*')
+    .gt('precio_usd', 0)
 
   console.log("=== DEBUG PLANES ===")
   console.log("Sede ID buscada:", sedeId)
@@ -54,6 +57,38 @@ export async function crearSuscripcionYOrden(payload: {
     nuevaFechaCorte.setUTCMonth(nuevaFechaCorte.getUTCMonth() + 1)
 
     const isCobroMovil = payload.metodo_pago === 'COBRO_MOVIL'
+    
+    // ==========================================
+    // RESOLUCIÓN DE CONFLICTOS (RACE CONDITION)
+    // ==========================================
+    if (!isCobroMovil) {
+      // Si es un pago manual/presencial, buscamos si el usuario dejó un cobro móvil flotando
+      const { data: ordenesPendientes } = await supabaseAdmin
+        .from('ordenes_cobro')
+        .select('id, metadata')
+        .eq('usuario_id', payload.usuario_id)
+        .eq('estado', 'PENDIENTE')
+        
+      if (ordenesPendientes && ordenesPendientes.length > 0) {
+        for (const orden of ordenesPendientes) {
+          const nuevaMetadata = {
+            ...(orden.metadata || {}),
+            anulacion_motivo: 'Anulada automáticamente por pago presencial posterior',
+            anulacion_fecha: new Date().toISOString()
+          }
+          await supabaseAdmin
+            .from('ordenes_cobro')
+            .update({ 
+              estado: 'CANCELADO',
+              metadata: nuevaMetadata
+            })
+            .eq('id', orden.id)
+            
+          console.log(`[Resolución Conflictos] Orden pendiente ${orden.id} anulada por nuevo pago presencial.`)
+        }
+      }
+    }
+
     const estadoSuscripcion = isCobroMovil ? 'INACTIVO' : 'ACTIVO'
 
     // 2. Insertar Suscripción

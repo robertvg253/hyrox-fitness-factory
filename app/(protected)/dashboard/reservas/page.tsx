@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Calendar as CalendarIcon, Clock, Users, ArrowRight, User, AlertTriangle, Loader2, CheckCircle2 } from 'lucide-react'
 import { createClient } from '@/src/utils/supabase/client'
+import { reservarClase } from '@/app/(protected)/dashboard/actions'
 
 export default function ReservasPage() {
   const [activeDay, setActiveDay] = useState<'HOY' | 'MANANA'>('HOY')
@@ -14,11 +15,13 @@ export default function ReservasPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [toast, setToast] = useState<{type: 'success'|'error', msg: string} | null>(null)
   const [isAfter9PM, setIsAfter9PM] = useState(false)
+  const [sedesPermitidas, setSedesPermitidas] = useState<{id: string, nombre: string}[]>([])
+  const [sedeSeleccionada, setSedeSeleccionada] = useState<string | null>(null)
 
   const supabase = createClient()
 
   // Helper para re-fetch de clases
-  const refetchClases = async (userId: string, after9: boolean) => {
+  const refetchClases = async (userId: string, after9: boolean, targetSedeId: string | null = sedeSeleccionada) => {
     const now = new Date()
     const todayEnd = new Date(now)
     todayEnd.setHours(23, 59, 59, 999)
@@ -28,12 +31,18 @@ export default function ReservasPage() {
     const queryStart = now.toISOString()
     const queryEnd = after9 ? tomorrowEnd.toISOString() : todayEnd.toISOString()
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('clases_programadas')
-      .select('*, disciplinas(nombre, color_hex), instructores(nombre), reservas(id, usuario_id)')
+      .select('*, disciplinas(nombre, color_hex), instructores(nombre), reservas(id, usuario_id, estado_reserva)')
       .gte('fecha_hora_inicio', queryStart)
       .lte('fecha_hora_inicio', queryEnd)
       .order('fecha_hora_inicio', { ascending: true })
+
+    if (targetSedeId) {
+      query = query.eq('sede_id', targetSedeId)
+    }
+
+    const { data, error } = await query
 
     if (!error) setClases(data || [])
   }
@@ -53,21 +62,51 @@ export default function ReservasPage() {
 
       setUser(authUser)
 
-      const { data: userData } = await supabase
-        .from('usuarios')
-        .select('estado')
-        .eq('id', authUser.id)
-        .single()
 
-      if (userData?.estado) {
-        setUserStatus(userData.estado)
-      }
 
       const now = new Date()
       const after9 = now.getHours() >= 21
       setIsAfter9PM(after9)
 
-      await refetchClases(authUser.id, after9)
+      const { data: subActiva } = await supabase
+        .from('suscripciones')
+        .select('estado, sesiones_restantes, planes(sedes, tipo)')
+        .eq('usuario_id', authUser.id)
+        .in('estado', ['ACTIVO', 'INACTIVO'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+        
+      let currentSede = null
+
+      if (subActiva) {
+         const isIlimitado = subActiva.planes?.tipo === 'TIEMPO'
+         const sesionesDisponibles = subActiva.sesiones_restantes || 0
+         
+         if (!isIlimitado && sesionesDisponibles <= 0) {
+           setUserStatus('SIN_SESIONES')
+         } else {
+           setUserStatus(subActiva.estado || 'VENCIDO')
+         }
+
+         const sedesIds = subActiva.planes?.sedes || []
+         if (sedesIds.length > 0) {
+           const { data: sedesData } = await supabase
+             .from('sedes')
+             .select('id, nombre')
+             .in('id', sedesIds)
+           
+           if (sedesData && sedesData.length > 0) {
+             setSedesPermitidas(sedesData)
+             setSedeSeleccionada(sedesData[0].id)
+             currentSede = sedesData[0].id
+           }
+         }
+      } else {
+        setUserStatus('VENCIDO')
+      }
+
+      await refetchClases(authUser.id, after9, currentSede)
       setIsLoading(false)
     }
 
@@ -87,7 +126,7 @@ export default function ReservasPage() {
         { event: '*', schema: 'public', table: 'reservas' },
         () => {
           // Re-fetch silencioso al detectar cualquier cambio en reservas
-          if (user) refetchClases(user.id, after9)
+          if (user) refetchClases(user.id, after9, sedeSeleccionada)
         }
       )
       .subscribe()
@@ -95,7 +134,13 @@ export default function ReservasPage() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [user])
+  }, [user, sedeSeleccionada]) // Include sedeSeleccionada in dependencies
+
+  useEffect(() => {
+    if (user && sedeSeleccionada) {
+       refetchClases(user.id, isAfter9PM, sedeSeleccionada)
+    }
+  }, [sedeSeleccionada])
 
   useEffect(() => {
     if (toast) {
@@ -113,32 +158,16 @@ export default function ReservasPage() {
     setActionLoading(claseId)
 
     try {
-      const { error } = await supabase.rpc('agendar_clase_segura', {
-        p_clase_id: claseId,
-        p_usuario_id: user.id
-      })
+      const res = await reservarClase(claseId, user.id)
 
-      if (error) {
-        const msg = error.message || ''
-        // Prioridad 1: Mensajes semánticos exactos lanzados por el SQL (RAISE EXCEPTION)
-        if (msg.toLowerCase().includes('ya tienes') || msg.toLowerCase().includes('already') || error.code === '23505') {
-          setToast({ type: 'error', msg: 'Ya tienes una reserva para esta clase.' })
-        } else if (msg.toLowerCase().includes('aforo') || msg.toLowerCase().includes('cupo') || msg.toLowerCase().includes('full')) {
-          setToast({ type: 'error', msg: 'Lo sentimos, esta clase ya no tiene cupos disponibles.' })
-        } else if (error.code === '400' || error.code?.startsWith('PG') || msg.toLowerCase().includes('invalid') || msg.toLowerCase().includes('bad request')) {
-          // Error de infraestructura / payload inválido, no enseñar mensaje crudo
-          setToast({ type: 'error', msg: 'Error de comunicación con el servidor. Intenta de nuevo.' })
-        } else {
-          // Cualquier otro error SQL: mostrar el mensaje tal cual (puede ser útil)
-          setToast({ type: 'error', msg: msg || 'Error al procesar la reserva.' })
-        }
+      if (!res.success) {
+        setToast({ type: 'error', msg: res.error || 'Error al procesar la reserva.' })
       } else {
         setToast({ type: 'success', msg: '¡Clase reservada con éxito! 🎉' })
         const now = new Date()
-        await refetchClases(user.id, now.getHours() >= 21)
+        await refetchClases(user.id, now.getHours() >= 21, sedeSeleccionada)
       }
     } catch (err: any) {
-      // Error de red o excepción de JS pura
       setToast({ type: 'error', msg: 'Error de comunicación con el servidor. Intenta de nuevo.' })
     } finally {
       setActionLoading(null)
@@ -152,7 +181,10 @@ export default function ReservasPage() {
     tomorrow.setDate(tomorrow.getDate() + 1)
     
     return clases.filter(c => {
-      const classDate = new Date(c.fecha_hora_inicio)
+      const startValue = c?.startTime || c?.fecha_hora_inicio
+      if (!startValue) return false
+      
+      const classDate = new Date(startValue)
       if (activeDay === 'HOY') {
         return classDate.toDateString() === today.toDateString()
       } else {
@@ -164,7 +196,10 @@ export default function ReservasPage() {
   // Group by hour block
   const clasesPorHora = useMemo(() => {
     return filteredClases.reduce((acc, clase) => {
-      const d = new Date(clase.fecha_hora_inicio)
+      const startValue = clase?.startTime || clase?.fecha_hora_inicio
+      if (!startValue) return acc
+      
+      const d = new Date(startValue)
       const hora = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) // e.g. "06:00 AM"
       if (!acc[hora]) acc[hora] = []
       acc[hora].push(clase)
@@ -210,13 +245,42 @@ export default function ReservasPage() {
         </div>
 
         {/* Banner de Estado (Bloqueo) */}
-        {isBlocked && (
+        {isBlocked && userStatus !== 'SIN_SESIONES' && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-5 flex items-start gap-4 backdrop-blur-sm">
             <AlertTriangle className="w-6 h-6 text-red-500 shrink-0 mt-0.5" />
             <div>
               <h3 className="text-red-500 font-bold text-lg mb-1">Membresía {userStatus.toLowerCase()}</h3>
               <p className="text-red-400/80 text-sm font-medium">Por favor procesa tu pago para habilitar la reserva de clases. Dirígete a recepción o paga en línea.</p>
             </div>
+          </div>
+        )}
+
+        {userStatus === 'SIN_SESIONES' && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-5 flex items-start gap-4 backdrop-blur-sm">
+            <AlertTriangle className="w-6 h-6 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <h3 className="text-amber-500 font-bold text-lg mb-1">Has agotado tus sesiones</h3>
+              <p className="text-amber-400/80 text-sm font-medium">Renueva tu plan para agendar más clases.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Multisede Selector */}
+        {sedesPermitidas.length > 1 && (
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+            {sedesPermitidas.map((sede) => (
+              <button
+                key={sede.id}
+                onClick={() => setSedeSeleccionada(sede.id)}
+                className={`px-4 py-2 rounded-full text-sm font-bold transition-all whitespace-nowrap ${
+                  sedeSeleccionada === sede.id
+                    ? 'bg-brand-primary text-black shadow-[0_0_10px_rgba(2,215,229,0.3)]'
+                    : 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white'
+                }`}
+              >
+                {sede.nombre}
+              </button>
+            ))}
           </div>
         )}
 
@@ -267,17 +331,18 @@ export default function ReservasPage() {
             <div key={hora} className="flex gap-4">
               
               {/* Eje de Tiempo (Izquierda) */}
-              <div className="w-14 flex-shrink-0 pt-3 text-right pr-2">
-                <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block">{hora.split(' ')[0]}</span>
-                <span className="text-[9px] text-zinc-600 font-bold">{hora.split(' ')[1]}</span>
+              <div className="w-14 flex-shrink-0 pt-3 text-right pr-2" suppressHydrationWarning>
+                <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block" suppressHydrationWarning>{hora.split(' ')[0]}</span>
+                <span className="text-[9px] text-zinc-600 font-bold" suppressHydrationWarning>{hora.split(' ')[1]}</span>
               </div>
 
               {/* Contenedor Flex de Tarjetas */}
               <div className="flex-1 flex gap-4 overflow-x-auto snap-x snap-mandatory pb-4 hide-scrollbar">
                 {clasesEnHora.map((clase: any) => {
-                  const reservasCount = clase.reservas?.length || 0
+                  const reservasActivas = clase.reservas?.filter((r: any) => r.estado_reserva !== 'CANCELADA') || []
+                  const reservasCount = reservasActivas.length
                   const isFull = reservasCount >= clase.aforo_maximo
-                  const userAlreadyBooked = clase.reservas?.some((r: any) => r.usuario_id === user?.id)
+                  const userAlreadyBooked = reservasActivas.some((r: any) => r.usuario_id === user?.id)
                   
                   const nombreDisplay = clase.disciplina_id ? clase.disciplinas?.nombre : clase.nombre_clase
                   const colorHex = clase.disciplinas?.color_hex || '#f59e0b' // Default ambar si es especial
@@ -329,7 +394,7 @@ export default function ReservasPage() {
 
                         {/* Detalles: Hora y Cupos */}
                         <div className="flex items-center justify-between text-xs font-medium pt-2">
-                          <div className="flex items-center gap-1.5 text-zinc-400">
+                          <div className="flex items-center gap-1.5 text-zinc-400" suppressHydrationWarning>
                             <Clock className="w-3.5 h-3.5" />
                             {hora}
                           </div>
@@ -358,9 +423,9 @@ export default function ReservasPage() {
                          ) : (
                            <button 
                              onClick={() => handleReservar(clase.id)}
-                             disabled={isBlocked || actionLoading === clase.id}
+                             disabled={isBlocked || userStatus === 'SIN_SESIONES' || actionLoading === clase.id}
                              className={`w-full py-3.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2
-                               ${isBlocked
+                               ${isBlocked || userStatus === 'SIN_SESIONES'
                                  ? 'bg-zinc-900 text-zinc-700 cursor-not-allowed'
                                  : 'bg-white text-zinc-950 hover:bg-zinc-200 shadow-[0_0_20px_rgba(255,255,255,0.1)] active:scale-[0.98]'
                                }
@@ -371,6 +436,8 @@ export default function ReservasPage() {
                                  <Loader2 className="w-4 h-4 animate-spin" />
                                  Procesando...
                                </>
+                             ) : userStatus === 'SIN_SESIONES' ? (
+                               'Sin Sesiones'
                              ) : isBlocked ? (
                                'Bloqueado'
                              ) : (

@@ -173,6 +173,30 @@ export default function ModalDetallesOrden({ isOpen, onClose, orden }: ModalDeta
               </div>
             )}
 
+            {/* Sección 4: Auditoría de Anulación (Condicional) */}
+            {metadata.anulacion && (
+              <div className="bg-red-500/5 rounded-xl p-5 border border-red-500/20">
+                <h3 className="text-xs font-bold text-red-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
+                  Auditoría de Anulación
+                </h3>
+                <dl className="grid grid-cols-1 gap-y-4 text-sm">
+                  <div>
+                    <dt className="text-xs text-red-400/70 mb-1">Anulado por</dt>
+                    <dd className="text-white font-medium">{metadata.anulacion.responsable_nombre} <span className="text-zinc-400 font-normal">({metadata.anulacion.responsable_email})</span></dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-red-400/70 mb-1">Fecha</dt>
+                    <dd className="text-zinc-300 font-medium">{new Date(metadata.anulacion.fecha).toLocaleString('es-VE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-red-400/70 mb-1">Motivo</dt>
+                    <dd className="text-zinc-300 italic">"{metadata.anulacion.motivo}"</dd>
+                  </div>
+                </dl>
+              </div>
+            )}
+
           </div>
 
           <div className="p-6 border-t border-white/10 bg-zinc-900">

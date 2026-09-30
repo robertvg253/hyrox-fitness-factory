@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { createClient as createServerClient } from '@/src/utils/supabase/server';
 import { getCaracasMidnightUTC } from '@/src/utils/timezone';
 import { EstadoOrden, MetodoPago, MetadataOrden } from '@/src/types';
 import { registrarEvento } from '@/src/services/logger';
+import { emitirCobroR4 } from '@/src/services/r4-service';
 
 export async function POST(request: Request) {
   try {
@@ -22,15 +24,36 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Faltan campos obligatorios' }, { status: 400 });
     }
 
-    const supabase = createClient(
+    const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
+    // Auditoría: Obtener identidad real
+    const supabaseAuth = await createServerClient();
+    const { data: { user } } = await supabaseAuth.auth.getUser();
+
+    let realResponsableId = responsable_id;
+    let realResponsableNombre = responsable_nombre;
+    let realResponsableEmail = 'desconocido@sistema.local';
+
+    if (user) {
+      realResponsableId = user.id;
+      realResponsableEmail = user.email || 'desconocido@sistema.local';
+      
+      const { data: adminProfile } = await supabaseAdmin
+        .from('usuarios')
+        .select('nombre_completo')
+        .eq('id', user.id)
+        .single();
+        
+      realResponsableNombre = adminProfile?.nombre_completo || user.email;
+    }
+
     // Paso A: Consulta la suscripción actual
-    const { data: suscripcion, error: subError } = await supabase
+    const { data: suscripcion, error: subError } = await supabaseAdmin
       .from('suscripciones')
-      .select('id, usuario_id, fecha_corte, estado')
+      .select('id, usuario_id, fecha_corte, estado, sesiones_restantes, metadata, planes(tipo, sesiones_total)')
       .eq('id', suscripcion_id)
       .single();
 
@@ -42,6 +65,27 @@ export async function POST(request: Request) {
     const fechaCorteAnterior = suscripcion.fecha_corte 
       ? new Date(suscripcion.fecha_corte) 
       : getCaracasMidnightUTC(0);
+      
+    // Detectar si hay COBRO_MOVIL involucrado
+    const isCobroMovilUnico = metodo_pago === 'COBRO_MOVIL';
+    const cobroMovilDesglosado = pagos_desglosados?.find((p: any) => p.metodo === 'COBRO_MOVIL');
+    const isCobroMovilMixto = metodo_pago === 'MIXTO' && !!cobroMovilDesglosado;
+    const hasCobroMovil = isCobroMovilUnico || isCobroMovilMixto;
+    
+    // Obtener datos del usuario si se necesita R4
+    let usuario: any = null;
+    if (hasCobroMovil) {
+      const { data: userData, error: userErr } = await supabaseAdmin
+        .from('usuarios')
+        .select('nombre_completo, cedula_rif, telefono')
+        .eq('id', suscripcion.usuario_id)
+        .single();
+        
+      if (userErr || !userData || !userData.telefono || !userData.cedula_rif) {
+        return NextResponse.json({ error: 'El usuario no tiene teléfono o cédula registrados para el Cobro Móvil.' }, { status: 400 });
+      }
+      usuario = userData;
+    }
     
     // Paso B (Time-Stacking): Calcula la nueva fecha de corte
     const hoy = getCaracasMidnightUTC(0);
@@ -57,64 +101,137 @@ export async function POST(request: Request) {
     nuevaFechaCorte.setUTCMonth(nuevaFechaCorte.getUTCMonth() + 1);
 
     // PRIMERO: Inserta un nuevo registro en ordenes_cobro
+    const isSesiones = suscripcion.planes?.tipo === 'SESIONES';
+    
     const metadata: MetadataOrden = {
       origin: 'recepcion-manual',
       timestamp: new Date().toISOString(),
-      responsable_id,
-      responsable_nombre,
+      responsable_id: realResponsableId,
+      responsable_nombre: realResponsableNombre,
+      responsable_email: realResponsableEmail,
       metodo_pago: metodo_pago as MetodoPago,
       referencia: referencia || undefined,
       pagos_desglosados: pagos_desglosados || undefined,
       fecha_corte_anterior: suscripcion.fecha_corte || undefined, // Guardar el string ISO original
+      ...(isSesiones ? { sesiones_anteriores: suscripcion.sesiones_restantes || 0 } : {})
     };
 
-    const estadoOrden: EstadoOrden = 'POR_CONCILIAR';
+    const estadoOrden: EstadoOrden = hasCobroMovil ? 'PENDIENTE' : 'POR_CONCILIAR';
 
-    const { data: nuevaOrden, error: ordenError } = await supabase
+    const { data: nuevaOrden, error: ordenError } = await supabaseAdmin
       .from('ordenes_cobro')
       .insert({
         suscripcion_id: suscripcion.id,
-        usuario_id: suscripcion.usuario_id, // Asumiendo que la tabla tiene este campo
+        usuario_id: suscripcion.usuario_id,
         monto: Number(monto),
         moneda: 'USD',
         estado: estadoOrden,
-        metadata: { ...metadata, provider: 'MANUAL' },
+        metadata: { ...metadata, provider: hasCobroMovil ? (isCobroMovilMixto ? 'MIXTO_R4' : 'R4') : 'MANUAL' },
       })
       .select('id')
       .single();
 
     if (ordenError) {
       console.error('[Cobro Manual] Error creando orden:', ordenError.message);
-      // Detenemos el flujo lanzando el error. La suscripción NO se actualiza.
       throw new Error('Error creando la orden de cobro: ' + ordenError.message);
     }
 
-    // SEGUNDO: Solo si el INSERT fue exitoso, actualiza la tabla suscripciones
-    const { error: updateSubError } = await supabase
-      .from('suscripciones')
-      .update({
-        estado: 'ACTIVO',
-        fecha_corte: nuevaFechaCorte.toISOString(),
-      })
-      .eq('id', suscripcion.id);
-
-    if (updateSubError) {
-      console.error('[Cobro Manual] Error actualizando suscripción (Inconsistencia leve):', updateSubError.message);
-      return NextResponse.json({ error: 'Error actualizando la suscripción tras crear orden' }, { status: 500 });
+    // SEGUNDO: Actualización Optimista a la Suscripción
+    const payloadSubUpdate: any = {
+      estado: 'ACTIVO',
+      fecha_corte: nuevaFechaCorte.toISOString(),
+      metadata: suscripcion.metadata || {}
+    };
+    
+    if (isSesiones) {
+      const sesionesActuales = suscripcion.sesiones_restantes || 0;
+      const sesionesDelPlan = suscripcion.planes?.sesiones_total || suscripcion.planes?.sesiones || 0;
+      payloadSubUpdate.sesiones_restantes = sesionesActuales + sesionesDelPlan;
+      
+      // Sello Explícito: Si tiene clases de sobra, guardamos cuándo se las vamos a recortar (en su antigua fecha_corte)
+      if (sesionesActuales > 0 && fechaCorteAnterior >= hoy) {
+        payloadSubUpdate.metadata.recortar_sesiones_el = fechaCorteAnterior.toISOString();
+      }
+    } else {
+      payloadSubUpdate.sesiones_restantes = null;
     }
 
-    // Log opcional para auditoría de sistema
-    await registrarEvento('ordenes_cobro', nuevaOrden.id, 'PAGO_APROBADO', {
-      nota: 'Pago manual procesado por recepción',
-      metodo_pago,
-      responsable_nombre
-    });
+    const performOptimisticUpdate = async () => {
+      const { error: updateSubError } = await supabaseAdmin
+        .from('suscripciones')
+        .update(payloadSubUpdate)
+        .eq('id', suscripcion.id);
+      
+      if (updateSubError) {
+        console.error('[Cobro Manual] Error actualizando suscripción optimista:', updateSubError.message);
+        throw new Error('Error actualizando la suscripción');
+      }
+    };
 
-    return NextResponse.json({
-      message: 'Cobro manual registrado exitosamente (Estado de Gracia)',
-      orden_id: nuevaOrden.id,
-      nueva_fecha_corte: nuevaFechaCorte.toISOString(),
-    }, { status: 200 });
+    if (hasCobroMovil) {
+      // 1. Invocar a R4
+      const montoR4 = isCobroMovilMixto ? cobroMovilDesglosado.monto : Number(monto);
+      
+      const r4Result = await emitirCobroR4({
+        monto: Number(montoR4),
+        nombre: usuario.nombre_completo,
+        cedula: usuario.cedula_rif,
+        telefono: usuario.telefono,
+        order_id: nuevaOrden.id,
+      });
+
+      if (r4Result.success) {
+        await supabaseAdmin
+          .from('ordenes_cobro')
+          .update({
+            estado: 'ENVIADO',
+            r4_transaction_id: r4Result.transaction_id ?? null,
+            metadata: {
+              ...metadata,
+              provider: isCobroMovilMixto ? 'MIXTO_R4' : 'R4',
+              r4_raw: r4Result.raw,
+            },
+          })
+          .eq('id', nuevaOrden.id);
+
+        await performOptimisticUpdate();
+
+        await registrarEvento('ordenes_cobro', nuevaOrden.id, 'EMISION_COBRO', {
+          nota: 'Cobro Móvil enviado a R4 (Tiempo Otorgado Optimistamente)',
+          monto_r4: montoR4,
+          transaction_id: r4Result.transaction_id
+        });
+
+        return NextResponse.json({
+          message: 'Instrucción de Cobro Móvil enviada. Esperando confirmación.',
+          orden_id: nuevaOrden.id,
+        }, { status: 200 });
+      } else {
+        await supabaseAdmin
+          .from('ordenes_cobro')
+          .update({
+            estado: 'ERROR',
+            metadata: { ...metadata, r4_error: r4Result.error, r4_raw: r4Result.raw },
+          })
+          .eq('id', nuevaOrden.id);
+
+        return NextResponse.json({ error: 'Error del servicio R4', details: r4Result.error }, { status: 502 });
+      }
+    } else {
+      // SEGUNDO: Si no hay R4, actualiza la tabla suscripciones inmediatamente (Estado de Gracia puro)
+      await performOptimisticUpdate();
+
+      await registrarEvento('ordenes_cobro', nuevaOrden.id, 'PAGO_REGISTRADO', {
+        nota: 'Pago manual procesado por recepción (Tiempo Otorgado Optimistamente)',
+        metodo_pago,
+        responsable_nombre: realResponsableNombre
+      });
+
+      return NextResponse.json({
+        message: 'Cobro manual registrado exitosamente (Estado de Gracia)',
+        orden_id: nuevaOrden.id,
+      }, { status: 200 });
+    }
 
   } catch (error: any) {
     console.error('[Cobro Manual] Error interno:', error);

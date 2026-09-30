@@ -100,3 +100,65 @@ export async function crearAtleta(formData: FormData) {
 
   return { success: true, data };
 }
+
+export async function asignarPlan(usuarioId: string, planId: string, sedeId: string | null) {
+  const supabase = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+
+  const { data: plan, error: planErr } = await supabase
+    .from('planes')
+    .select('precio_usd, tipo, sesiones_total')
+    .eq('id', planId)
+    .single();
+
+  if (planErr || !plan) {
+    return { success: false, error: 'Plan no encontrado' };
+  }
+
+  // 1. Limpiar suscripciones anteriores activas
+  await supabase
+    .from('suscripciones')
+    .update({ estado: 'INACTIVO' })
+    .eq('usuario_id', usuarioId)
+    .eq('estado', 'ACTIVO');
+
+  // 2. Preparar el payload de la nueva suscripción (Nacimiento Neutro)
+  const hoy = new Date();
+  const payload: any = {
+    usuario_id: usuarioId,
+    plan_id: planId,
+    estado: 'INACTIVO',
+    fecha_corte: hoy.toISOString()
+  };
+
+  // Inyectar sesiones en 0 si corresponde (el motor optimista sumará al pagar)
+  if (plan.tipo === 'SESIONES') {
+    payload.sesiones_restantes = 0;
+  }
+
+  // 3. Inserción Completa y Calculada
+  const { data, error } = await supabase
+    .from('suscripciones')
+    .insert(payload)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[asignarPlan]', error);
+    return { success: false, error: 'Error al asignar plan' };
+  }
+
+  // Graduar al usuario (limpiar etiqueta_lead)
+  const { error: userError } = await supabase
+    .from('usuarios')
+    .update({ etiqueta_lead: null })
+    .eq('id', usuarioId);
+
+  if (userError) {
+    console.error('[asignarPlan] Error limpiando etiqueta_lead', userError);
+  }
+
+  return { success: true, data };
+}

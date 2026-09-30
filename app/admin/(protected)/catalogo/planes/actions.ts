@@ -10,6 +10,7 @@ export async function obtenerTodosLosPlanes() {
     const { data, error } = await supabase
       .from('planes')
       .select('*')
+      .gt('precio_usd', 0)
       .order('created_at', { ascending: false })
 
     if (error) throw new Error(error.message)
@@ -40,7 +41,7 @@ export async function obtenerSedesParaSelect() {
     if (error) throw error
     return { success: true, data }
   } catch (err: any) {
-    return { success: false, error: err.message }
+    return { success: false, error: err.message, data: [] }
   }
 }
 
@@ -50,8 +51,9 @@ export async function upsertPlan(payload: {
   descripcion?: string
   precio_usd: number
   estado: string
-  frecuencia: number
   sedes: string[]
+  tipo: 'TIEMPO' | 'SESIONES'
+  sesiones_total: number | null
 }) {
   const supabase = await createClient()
   
@@ -64,8 +66,9 @@ export async function upsertPlan(payload: {
           descripcion: payload.descripcion,
           precio_usd: payload.precio_usd,
           estado: payload.estado,
-          frecuencia: payload.frecuencia,
           sedes: payload.sedes,
+          tipo: payload.tipo,
+          sesiones_total: payload.sesiones_total,
           updated_at: new Date().toISOString()
         })
         .eq('id', payload.id)
@@ -79,8 +82,9 @@ export async function upsertPlan(payload: {
           descripcion: payload.descripcion,
           precio_usd: payload.precio_usd,
           estado: payload.estado,
-          frecuencia: payload.frecuencia,
-          sedes: payload.sedes
+          sedes: payload.sedes,
+          tipo: payload.tipo,
+          sesiones_total: payload.sesiones_total
         })
       
       if (error) throw error

@@ -22,10 +22,12 @@ export default async function UsuariosPage() {
       id,
       nombre_completo,
       telefono,
+      etiqueta_lead,
       suscripciones (
         id,
         estado,
         fecha_corte,
+        sesiones_restantes,
         planes (
           id,
           nombre,

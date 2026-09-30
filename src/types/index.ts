@@ -5,12 +5,23 @@ export type EstadoOrden =
   | 'RECHAZADO'
   | 'EXPIRADO'
   | 'ERROR'
-  | 'POR_CONCILIAR';
+  | 'POR_CONCILIAR'
+  | 'CANCELADO';
 
 export type EstadoSuscripcion = 
   | 'ACTIVO'
   | 'INACTIVO'
   | 'CANCELADO';
+
+export interface Suscripcion {
+  id: string;
+  usuario_id: string;
+  plan_id: string;
+  estado: EstadoSuscripcion;
+  fecha_inicio?: string;
+  fecha_corte?: string;
+  sesiones_restantes?: number | null;
+}
 
 export interface Plan {
   id: string;
@@ -18,6 +29,8 @@ export interface Plan {
   precio_usd: number;
   sedes?: string[]; // UUIDs o nombres
   estado?: 'ACTIVO' | 'INACTIVO' | 'ARCHIVADO';
+  tipo?: 'TIEMPO' | 'SESIONES';
+  sesiones_total?: number | null;
 }
 
 export type MetodoPago = 
