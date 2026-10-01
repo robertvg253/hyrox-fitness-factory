@@ -133,6 +133,8 @@ export default function ModalAsignarPlan({ isOpen, onClose, usuarioId, usuarioNo
 
       const cobroPayload = {
         suscripcion_id: newSubId,
+        usuario_id: usuarioId,
+        plan_id: selectedPlan,
         monto: total,
         metodo_pago: metodoPrincipal,
         referencia: isMixto ? 'MÚLTIPLES' : pagos_desglosados[0].referencia || 'S/R',

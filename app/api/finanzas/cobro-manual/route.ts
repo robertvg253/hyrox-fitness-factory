@@ -11,6 +11,8 @@ export async function POST(request: Request) {
     const body = await request.json();
     const {
       suscripcion_id,
+      usuario_id,
+      plan_id,
       monto,
       metodo_pago,
       referencia,
@@ -20,8 +22,18 @@ export async function POST(request: Request) {
     } = body;
 
     // Validaciones básicas
-    if (!suscripcion_id || !monto || !metodo_pago || !responsable_id || !responsable_nombre) {
-      return NextResponse.json({ error: 'Faltan campos obligatorios' }, { status: 400 });
+    const isFlujoNueva = !suscripcion_id || suscripcion_id === 'undefined';
+    
+    if (isFlujoNueva && (!usuario_id || !plan_id)) {
+      return NextResponse.json({ error: 'Faltan campos para crear nueva suscripción (usuario_id, plan_id)' }, { status: 400 });
+    }
+
+    if (!isFlujoNueva && !suscripcion_id) {
+       return NextResponse.json({ error: 'Faltan campos obligatorios' }, { status: 400 });
+    }
+    
+    if (!monto || !metodo_pago || !responsable_id || !responsable_nombre) {
+      return NextResponse.json({ error: 'Faltan campos obligatorios de pago' }, { status: 400 });
     }
 
     const supabaseAdmin = createClient(
@@ -50,16 +62,50 @@ export async function POST(request: Request) {
       realResponsableNombre = adminProfile?.nombre_completo || user.email;
     }
 
-    // Paso A: Consulta la suscripción actual
-    const { data: suscripcion, error: subError } = await supabaseAdmin
-      .from('suscripciones')
-      .select('id, usuario_id, fecha_corte, estado, sesiones_restantes, metadata, planes(tipo, sesiones_total)')
-      .eq('id', suscripcion_id)
-      .single();
+    // Flujo B (Renovación) vs Flujo A (Creación Nueva)
+    let suscripcion: any = null;
+    
+    if (!isFlujoNueva) {
+      const { data: subDb, error: subError } = await supabaseAdmin
+        .from('suscripciones')
+        .select('id, usuario_id, fecha_corte, estado, sesiones_restantes, metadata, planes(tipo, sesiones_total)')
+        .eq('id', suscripcion_id)
+        .single();
 
-    if (subError || !suscripcion) {
-      console.error('[Cobro Manual] Error buscando suscripción:', subError?.message);
-      return NextResponse.json({ error: 'Suscripción no encontrada' }, { status: 404 });
+      if (subError || !subDb) {
+        console.error('[Cobro Manual] Error buscando suscripción:', subError?.message);
+        return NextResponse.json({ error: 'Suscripción no encontrada' }, { status: 404 });
+      }
+      suscripcion = subDb;
+    } else {
+      // Flujo A: Crear la suscripción de forma transparente si no existe
+      const { data: planData, error: planErr } = await supabaseAdmin
+        .from('planes')
+        .select('tipo, sesiones_total')
+        .eq('id', plan_id)
+        .single();
+        
+      if (planErr || !planData) {
+        return NextResponse.json({ error: 'Plan no encontrado para la nueva suscripción' }, { status: 404 });
+      }
+
+      const { data: newSub, error: createSubErr } = await supabaseAdmin
+        .from('suscripciones')
+        .insert({
+          usuario_id,
+          plan_id,
+          estado: 'INACTIVO',
+          fecha_corte: getCaracasMidnightUTC(0).toISOString(),
+          sesiones_restantes: planData.tipo === 'SESIONES' ? 0 : null
+        })
+        .select('id, usuario_id, fecha_corte, estado, sesiones_restantes, metadata, planes(tipo, sesiones_total)')
+        .single();
+        
+      if (createSubErr || !newSub) {
+         console.error('[Cobro Manual] Error creando suscripción base:', createSubErr?.message);
+         return NextResponse.json({ error: 'Fallo al crear la suscripción inicial' }, { status: 500 });
+      }
+      suscripcion = newSub;
     }
 
     const fechaCorteAnterior = suscripcion.fecha_corte 
