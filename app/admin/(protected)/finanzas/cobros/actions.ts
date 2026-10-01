@@ -229,7 +229,8 @@ export async function anularCobro(ordenId: string, motivo: string) {
     const now = new Date();
     let nuevoEstado = fechaRevertida > now ? 'ACTIVO' : 'INACTIVO';
     
-    const isSesiones = subActual?.planes?.tipo === 'SESIONES';
+    const planesObj = Array.isArray(subActual?.planes) ? subActual?.planes[0] : subActual?.planes;
+    const isSesiones = (planesObj as any)?.tipo === 'SESIONES';
     let sesionesRevertidas: number | null = null;
     
     if (isSesiones) {
@@ -238,11 +239,11 @@ export async function anularCobro(ordenId: string, motivo: string) {
       } else {
         // Fallback legacy
         const sesionesActuales = subActual?.sesiones_restantes || 0;
-        const sesionesPlan = subActual?.planes?.sesiones_total || 0;
+        const sesionesPlan = (planesObj as any)?.sesiones_total || 0;
         sesionesRevertidas = Math.max(0, sesionesActuales - sesionesPlan);
       }
       
-      if (sesionesRevertidas <= 0) {
+      if ((sesionesRevertidas ?? 0) <= 0) {
         nuevoEstado = 'INACTIVO';
       }
     }

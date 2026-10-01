@@ -542,9 +542,9 @@ export default function CalendarioPage() {
                     </div>
                   )}
                   
-                  {clase.reservas && (
+                  {(clase as any).reservas && (
                     <div className="mt-1 pl-1.5 flex flex-col gap-0.5">
-                      {clase.reservas
+                      {(clase as any).reservas
                         .filter((r: any) => r.estado_reserva !== 'CANCELADA')
                         .slice(0, 3)
                         .map((r: any) => (
@@ -552,9 +552,9 @@ export default function CalendarioPage() {
                             • {r.usuarios?.nombre_completo?.split(' ')[0] || 'Atleta'}
                           </div>
                       ))}
-                      {clase.reservas.filter((r: any) => r.estado_reserva !== 'CANCELADA').length > 3 && (
+                      {(clase as any).reservas.filter((r: any) => r.estado_reserva !== 'CANCELADA').length > 3 && (
                         <div className="text-[8px] text-gray-500 italic pl-1">
-                          +{clase.reservas.filter((r: any) => r.estado_reserva !== 'CANCELADA').length - 3} más
+                          +{(clase as any).reservas.filter((r: any) => r.estado_reserva !== 'CANCELADA').length - 3} más
                         </div>
                       )}
                     </div>

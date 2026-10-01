@@ -23,8 +23,8 @@ export async function toggleAsistencia(reservaId: string, asistio: boolean) {
     if (currentlyAsistio === asistio) return { success: true }
 
     // 2. Lógica del motor de consumo de sesiones (Torniquete)
-    const suscripcionActiva = Array.isArray(reserva.usuarios?.suscripciones) 
-      ? reserva.usuarios?.suscripciones.find((s: any) => s.estado === 'ACTIVO' || s.estado === 'INACTIVO') // Asumimos la primera que aplique
+    const suscripcionActiva = Array.isArray((reserva.usuarios as any)?.suscripciones) 
+      ? (reserva.usuarios as any)?.suscripciones.find((s: any) => s.estado === 'ACTIVO' || s.estado === 'INACTIVO') // Asumimos la primera que aplique
       : null;
 
     if (suscripcionActiva && suscripcionActiva.planes?.tipo === 'SESIONES') {

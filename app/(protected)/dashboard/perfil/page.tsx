@@ -50,7 +50,8 @@ export default async function PerfilAtletaPage() {
   const fechaCorte = suscripcionActiva?.fecha_corte 
     ? formatCaracasDate(suscripcionActiva.fecha_corte)
     : 'No disponible'
-  const nombrePlan = suscripcionActiva?.planes?.nombre || 'No tienes ningún plan activo'
+  const planesObj = Array.isArray(suscripcionActiva?.planes) ? suscripcionActiva.planes[0] : suscripcionActiva?.planes;
+  const nombrePlan = (planesObj as any)?.nombre || 'No tienes ningún plan activo'
 
   return (
     <div className="min-h-screen bg-black text-white pb-24">

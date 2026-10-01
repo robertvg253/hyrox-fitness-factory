@@ -81,7 +81,8 @@ export default async function DashboardPage() {
   }
 
   // Sesiones disponibles y control de acceso (Planes de Tiempo son ilimitados)
-  const isIlimitado = suscripcionActiva?.planes?.tipo === 'TIEMPO'
+  const planesObj = Array.isArray(suscripcionActiva?.planes) ? suscripcionActiva.planes[0] : suscripcionActiva?.planes
+  const isIlimitado = (planesObj as any)?.tipo === 'TIEMPO'
   const sesionesDisponibles = suscripcionActiva?.sesiones_restantes ?? 0
   const sinSesiones = !isIlimitado && sesionesDisponibles <= 0
   const userBookedProximaClase = !!proximaReserva

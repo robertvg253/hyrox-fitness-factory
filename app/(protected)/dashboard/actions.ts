@@ -125,13 +125,14 @@ export async function reservarClase(claseId: string, usuarioId: string) {
     if (subActiva) {
        subActivaId = subActiva.id
        currentSesiones = subActiva.sesiones_restantes || 0
-       isPlanIlimitado = subActiva.planes?.tipo === 'TIEMPO'
+       const planesObj = Array.isArray(subActiva.planes) ? subActiva.planes[0] : subActiva.planes;
+       isPlanIlimitado = (planesObj as any)?.tipo === 'TIEMPO'
        
        if (!isPlanIlimitado && currentSesiones <= 0) {
          throw new Error('Has agotado tus sesiones. Renueva tu plan para seguir entrenando.')
        }
 
-       if (subActiva?.planes?.nombre === 'Clase de Prueba') {
+       if ((planesObj as any)?.nombre === 'Clase de Prueba') {
          isPrueba = true
        }
     } else {

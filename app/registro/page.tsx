@@ -98,7 +98,7 @@ export default function RegistroPage() {
     try {
       const otpRes = await enviarOtp(fullPhone)
       if (otpRes.success) {
-        toast.success(otpRes.message)
+        toast.success(otpRes.message as any)
         setStep(4)
         setTimer(60)
       } else {

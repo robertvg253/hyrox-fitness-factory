@@ -66,13 +66,14 @@ export async function procesarRenovacion(
   // Time-Stacking: Sumar 1 mes exacto de forma segura en UTC
   nuevaFechaCorte.setUTCMonth(nuevaFechaCorte.getUTCMonth() + 1);
 
-  const isSesiones = suscripcion.planes?.tipo === 'SESIONES';
+  const planesObj = Array.isArray(suscripcion.planes) ? suscripcion.planes[0] : suscripcion.planes;
+  const isSesiones = (planesObj as any)?.tipo === 'SESIONES';
   const payloadToUpdate: any = {
     estado: 'ACTIVO',
   };
 
   if (isSesiones) {
-    payloadToUpdate.sesiones_restantes = suscripcion.planes?.sesiones_total || 0;
+    payloadToUpdate.sesiones_restantes = (planesObj as any)?.sesiones_total || 0;
     // La fecha_corte puede mantenerse o no actualizarse en planes por sesiones, 
     // pero mantendremos la proyección en caso de plan mixto o reglas futuras.
     payloadToUpdate.fecha_corte = nuevaFechaCorte.toISOString();

@@ -101,7 +101,8 @@ export async function POST(request: Request) {
     nuevaFechaCorte.setUTCMonth(nuevaFechaCorte.getUTCMonth() + 1);
 
     // PRIMERO: Inserta un nuevo registro en ordenes_cobro
-    const isSesiones = suscripcion.planes?.tipo === 'SESIONES';
+    const planesObj = Array.isArray(suscripcion.planes) ? suscripcion.planes[0] : suscripcion.planes;
+    const isSesiones = (planesObj as any)?.tipo === 'SESIONES';
     
     const metadata: MetadataOrden = {
       origin: 'recepcion-manual',
@@ -145,7 +146,7 @@ export async function POST(request: Request) {
     
     if (isSesiones) {
       const sesionesActuales = suscripcion.sesiones_restantes || 0;
-      const sesionesDelPlan = suscripcion.planes?.sesiones_total || suscripcion.planes?.sesiones || 0;
+      const sesionesDelPlan = (planesObj as any)?.sesiones_total || (planesObj as any)?.sesiones || 0;
       payloadSubUpdate.sesiones_restantes = sesionesActuales + sesionesDelPlan;
       
       // Sello Explícito: Si tiene clases de sobra, guardamos cuándo se las vamos a recortar (en su antigua fecha_corte)
@@ -221,7 +222,7 @@ export async function POST(request: Request) {
       // SEGUNDO: Si no hay R4, actualiza la tabla suscripciones inmediatamente (Estado de Gracia puro)
       await performOptimisticUpdate();
 
-      await registrarEvento('ordenes_cobro', nuevaOrden.id, 'PAGO_REGISTRADO', {
+      await registrarEvento('ordenes_cobro', nuevaOrden.id, 'PAGO_REGISTRADO' as any, {
         nota: 'Pago manual procesado por recepción (Tiempo Otorgado Optimistamente)',
         metodo_pago,
         responsable_nombre: realResponsableNombre

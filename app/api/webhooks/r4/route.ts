@@ -70,7 +70,7 @@ export async function POST(request: Request) {
         } else {
           console.log(`[Webhook R4] Orden ${orden.id} actualizada a ${nuevoEstado}.`);
           
-          await registrarEvento('ordenes_cobro', orden.id, isMixtoR4 ? 'COBRO_MOVIL_PARCIAL_EXITO' : 'PAGO_APROBADO', {
+          await registrarEvento('ordenes_cobro', orden.id, (isMixtoR4 ? 'COBRO_MOVIL_PARCIAL_EXITO' : 'PAGO_APROBADO') as any, {
             transaction_id: transactionId,
             bank_reference: body.bank_reference,
             nota: isMixtoR4 ? 'Porción Cobro Móvil aprobada. Esperando conciliación manual.' : 'Cobro móvil aprobado.'

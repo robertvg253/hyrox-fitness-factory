@@ -80,7 +80,8 @@ export default function ReservasPage() {
       let currentSede = null
 
       if (subActiva) {
-         const isIlimitado = subActiva.planes?.tipo === 'TIEMPO'
+         const planesObj = Array.isArray(subActiva?.planes) ? subActiva.planes[0] : subActiva?.planes;
+         const isIlimitado = (planesObj as any)?.tipo === 'TIEMPO'
          const sesionesDisponibles = subActiva.sesiones_restantes || 0
          
          if (!isIlimitado && sesionesDisponibles <= 0) {
@@ -89,7 +90,7 @@ export default function ReservasPage() {
            setUserStatus(subActiva.estado || 'VENCIDO')
          }
 
-         const sedesIds = subActiva.planes?.sedes || []
+         const sedesIds = (planesObj as any)?.sedes || []
          if (sedesIds.length > 0) {
            const { data: sedesData } = await supabase
              .from('sedes')
@@ -244,8 +245,7 @@ export default function ReservasPage() {
           <h1 className="text-2xl font-bold text-white tracking-tight">Reserva tu Clase</h1>
         </div>
 
-        {/* Banner de Estado (Bloqueo) */}
-        {isBlocked && userStatus !== 'SIN_SESIONES' && (
+        {isBlocked && (userStatus as string) !== 'SIN_SESIONES' && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-5 flex items-start gap-4 backdrop-blur-sm">
             <AlertTriangle className="w-6 h-6 text-red-500 shrink-0 mt-0.5" />
             <div>

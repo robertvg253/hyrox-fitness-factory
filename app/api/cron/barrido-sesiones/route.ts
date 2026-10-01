@@ -17,7 +17,6 @@ export async function GET(request: Request) {
     );
 
     // 2. Ejecutar la Lógica de Barrido
-    const hoyISO = getCaracasMidnightUTC(0).toISOString();
     const hoyRealISO = new Date().toISOString();
     
     // Buscar todas las suscripciones que tengan el sello explícito vencido o igual a hoy
@@ -38,7 +37,8 @@ export async function GET(request: Request) {
       const metadata = { ...sub.metadata };
       delete metadata.recortar_sesiones_el;
       
-      const maxSesiones = sub.planes?.sesiones_total || 0;
+      const planesObj = Array.isArray(sub.planes) ? sub.planes[0] : sub.planes;
+      const maxSesiones = (planesObj as any)?.sesiones_total || 0;
 
       const { error: updateErr } = await supabaseAdmin
         .from('suscripciones')

@@ -103,7 +103,9 @@ export async function POST(request: Request) {
       const now = new Date();
       let nuevoEstado = fechaRevertida > now ? 'ACTIVO' : 'INACTIVO';
 
-      const isSesiones = orden.suscripciones?.planes?.tipo === 'SESIONES';
+      const subsObj = Array.isArray(orden.suscripciones) ? orden.suscripciones[0] : orden.suscripciones;
+      const planesObj = Array.isArray((subsObj as any)?.planes) ? (subsObj as any)?.planes[0] : (subsObj as any)?.planes;
+      const isSesiones = (planesObj as any)?.tipo === 'SESIONES';
       let sesionesRevertidas: number | null = null;
       
       if (isSesiones) {
@@ -111,12 +113,12 @@ export async function POST(request: Request) {
           sesionesRevertidas = metadataActual.sesiones_anteriores;
         } else {
           // Fallback legacy sesiones
-          const sesionesActuales = orden.suscripciones?.sesiones_restantes || 0;
-          const sesionesPlan = orden.suscripciones?.planes?.sesiones_total || 0;
+          const sesionesActuales = (subsObj as any)?.sesiones_restantes || 0;
+          const sesionesPlan = (planesObj as any)?.sesiones_total || 0;
           sesionesRevertidas = Math.max(0, sesionesActuales - sesionesPlan);
         }
         
-        if (sesionesRevertidas <= 0) {
+        if ((sesionesRevertidas ?? 0) <= 0) {
           nuevoEstado = 'INACTIVO';
         }
       }

@@ -14,9 +14,14 @@ interface ModalCobroManualProps {
   onSuccess: () => void;
 }
 
-
-
-
+const METODOS_OPCIONES = [
+  { value: 'ZELLE', label: 'Zelle' },
+  { value: 'EFECTIVO', label: 'Efectivo USD' },
+  { value: 'PAGO_MOVIL', label: 'Pago Móvil' },
+  { value: 'COBRO_MOVIL', label: 'Cobro Móvil (R4)' },
+  { value: 'POS', label: 'Punto de Venta' },
+  { value: 'MIXTO', label: 'Pago Mixto' }
+];
 
 export default function ModalCobroManual({ isOpen, onClose, suscripcionId, precioPlan, usuarios, onSuccess }: ModalCobroManualProps) {
   const [isMixto, setIsMixto] = useState(false);
