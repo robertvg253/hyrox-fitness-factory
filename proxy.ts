@@ -56,57 +56,45 @@ export async function proxy(request: NextRequest) {
     }
 
     if (user) {
-      // 1. Hacer el fetch manejando errores explícitamente y usando sintaxis relacional
+      // 1. Fetch de rol del usuario
       const { data: usuarioCrudo, error } = await supabase
         .from('usuarios')
-        .select(`
-          rol,
-          suscripciones (
-            estado,
-            fecha_corte
-          )
-        `)
+        .select('rol')
         .eq('id', user.id)
         .single()
-        
-      // LOGS QUIRÚRGICOS
-      console.log("Usuario crudo devuelto por Supabase:", JSON.stringify(usuarioCrudo, null, 2))
 
       if (error) {
-        console.log("[MIDDLEWARE ERROR] Fallo al leer usuario. Revisa las políticas RLS. Error:", error)
+        console.log("[MIDDLEWARE ERROR] Fallo al leer usuario en admin:", error)
       }
 
       const rol = (usuarioCrudo?.rol || '').toUpperCase()
+      const isStaff = ['SUPERADMIN', 'GERENTE', 'GERENTE_SEDE', 'RECEPCIONISTA', 'RECEPCION'].includes(rol)
 
-      // Lógica de Extracción de la suscripción (la más reciente o activa)
-      // Como es un array, tomamos la primera de forma segura
-      const suscripciones = usuarioCrudo?.suscripciones || []
-      // Dependiendo de Supabase, puede venir como array o objeto simple si es uno a uno. Asumimos array por seguridad.
-      const suscripcionActiva = Array.isArray(suscripciones) ? suscripciones[0] : suscripciones
-
-      const estado = (suscripcionActiva?.estado || 'VENCIDO').toUpperCase()
-      const fechaVencimientoBD = suscripcionActiva?.fecha_corte
-
-      // Restauramos la evaluación de fechas para los logs
-      if (rol === 'ATLETA') {
-        if (estado === 'ACTIVO' && fechaVencimientoBD) {
-          const fechaVencimiento = new Date(fechaVencimientoBD)
-          const ahora = new Date()
-          const estaVencido = fechaVencimiento < ahora
-          console.log(`[MIDDLEWARE] Evaluación de fecha: BD (${fechaVencimiento.toISOString()}) < Servidor (${ahora.toISOString()}) = ${estaVencido}`)
-        } else if (estado === 'ACTIVO' && !fechaVencimientoBD) {
-          console.log("[MIDDLEWARE] ATLETA ACTIVO pero fecha_corte es null. Aplicando bloqueo de seguridad en evaluación.")
-        }
-      }
-
-      // Atletas no pueden acceder a /admin
-      if (rol === 'ATLETA' && isAdminRoute) {
-        url.pathname = '/dashboard'
+      // 1. Validación estricta: Si es ATLETA o no tiene rol de staff, expulsarlo inmediatamente
+      if (!isStaff) {
+        url.pathname = rol === 'ATLETA' ? '/dashboard' : '/login'
         return NextResponse.redirect(url)
       }
 
-      // Si está logueado y es ADMIN/SUPERADMIN e intenta ir a /admin/login
-      if (isAdminLogin && (rol === 'ADMIN' || rol === 'SUPERADMIN')) {
+      // 2. Si está autenticado como staff e intenta acceder a /admin/login
+      if (isAdminLogin) {
+        url.pathname = '/admin/dashboard'
+        return NextResponse.redirect(url)
+      }
+
+      // 3. Doble protección de rutas de alta gerencia: /admin/finanzas y /admin/kpis
+      const isHighManagementRoute = pathname.startsWith('/admin/finanzas') || pathname.startsWith('/admin/kpis')
+      const isHighManagementRole = ['SUPERADMIN', 'GERENTE', 'GERENTE_SEDE'].includes(rol)
+
+      if (isHighManagementRoute && !isHighManagementRole) {
+        // Recepción y otros roles de staff son redirigidos a su panel principal
+        url.pathname = '/admin/dashboard'
+        return NextResponse.redirect(url)
+      }
+
+      // 4. Protección estricta de /admin/configuracion: Únicamente SUPERADMIN
+      const isConfiguracionRoute = pathname.startsWith('/admin/configuracion')
+      if (isConfiguracionRoute && rol !== 'SUPERADMIN') {
         url.pathname = '/admin/dashboard'
         return NextResponse.redirect(url)
       }

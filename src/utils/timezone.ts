@@ -61,3 +61,18 @@ export function formatCaracasDateTime(dateString: string | Date | null | undefin
     hour12: true
   }).format(date);
 }
+
+/**
+ * Formatea una fecha para mostrar solo la hora usando estrictamente la zona de Caracas.
+ */
+export function formatCaracasTime(dateString: string | Date | null | undefined): string {
+  if (!dateString) return 'No disponible';
+  const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
+  
+  return new Intl.DateTimeFormat('es-VE', {
+    timeZone: 'America/Caracas',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  }).format(date);
+}

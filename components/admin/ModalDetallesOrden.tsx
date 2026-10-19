@@ -143,6 +143,34 @@ export default function ModalDetallesOrden({ isOpen, onClose, orden }: ModalDeta
               )}
             </div>
 
+            {/* Sección Comprobante Adjunto (Condicional) */}
+            {metadata.comprobante_url && (
+              <div className="bg-black/30 rounded-xl p-5 border border-zinc-800/50">
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider mb-4 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#02D7E5]"></span>
+                  Comprobante Adjunto
+                </h3>
+                <div className="relative w-full overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50 flex flex-col items-center justify-center p-2 min-h-[150px]">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img 
+                    src={metadata.comprobante_url} 
+                    alt="Comprobante de pago" 
+                    className="max-h-[300px] w-auto object-contain rounded-md"
+                  />
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <a 
+                    href={metadata.comprobante_url} 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="text-[10px] font-bold uppercase tracking-wider text-[#02D7E5] hover:text-[#02D7E5]/80 transition-colors flex items-center gap-1"
+                  >
+                    Abrir en pestaña nueva ↗
+                  </a>
+                </div>
+              </div>
+            )}
+
             {/* Sección 3: Auditoría de Conciliación (Condicional) */}
             {(metadata.conciliado_por_nombre || metadata.rechazado_por_nombre || metadata.fecha_corte_anterior) && (
               <div className="bg-black/30 rounded-xl p-5 border border-zinc-800/50">

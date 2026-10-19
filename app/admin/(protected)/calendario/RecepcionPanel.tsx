@@ -1,10 +1,10 @@
 'use client'
 
 import { useState, useEffect, startTransition, useRef } from 'react'
-import { CheckCircle2, Circle, Search, UserPlus, Phone, User, X, Loader2, AlertCircle } from 'lucide-react'
+import { CheckCircle2, Circle, Search, UserPlus, Phone, User, X, Loader2, AlertCircle, XCircle } from 'lucide-react'
 import { createClient } from '@/src/utils/supabase/client'
 import toast from 'react-hot-toast'
-import { toggleAsistencia, registrarWalkIn, registrarLeadYWalkIn } from './actions'
+import { marcarAsistencia, registrarWalkIn, registrarLeadYWalkIn, buscarAtletasParaWalkIn } from './actions'
 import { enviarOtp, validarOtp } from '@/app/auth/actions'
 import { useRouter } from 'next/navigation'
 import { Calendar } from 'lucide-react'
@@ -19,11 +19,57 @@ interface Props {
 export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }: Props) {
   const [activeTab, setActiveTab] = useState<'A' | 'B' | 'C'>('A')
   const [loadingAction, setLoadingAction] = useState<string | null>(null)
-  
+
   const [participantesLocales, setParticipantesLocales] = useState<any[]>(clase.reservas || [])
 
   useEffect(() => {
-    setParticipantesLocales(clase.reservas || [])
+    if (!clase?.reservas) {
+      setParticipantesLocales([])
+      return
+    }
+
+    setParticipantesLocales(prev => {
+      // Mapeo no destructivo que preserva datos enriquecidos si incoming viene incompleto
+      const updated = clase.reservas.map((incoming: any) => {
+        const existing = prev.find((p: any) => 
+          p.id === incoming.id || 
+          (incoming.usuario_id && p.usuario_id === incoming.usuario_id)
+        )
+
+        const rawIncomingUser = incoming.atleta || incoming.usuario || incoming.usuarios
+        const incomingUser = Array.isArray(rawIncomingUser) ? rawIncomingUser[0] : rawIncomingUser
+        const incomingName = incomingUser?.nombre_completo || incomingUser?.nombre || incoming?.nombre_completo || incoming?.nombre
+
+        if (!incomingName && existing) {
+          const rawExistingUser = existing.atleta || existing.usuario || existing.usuarios
+          const existingUser = Array.isArray(rawExistingUser) ? rawExistingUser[0] : rawExistingUser
+          const fallbackName = existing.nombre_completo || existingUser?.nombre_completo || existingUser?.nombre
+
+          return {
+            ...incoming,
+            nombre_completo: fallbackName,
+            atleta: existingUser || incoming.atleta,
+            usuario: existingUser || incoming.usuario,
+            usuarios: existingUser || incoming.usuarios
+          }
+        }
+
+        return {
+          ...incoming,
+          nombre_completo: incomingName || incoming.nombre_completo,
+          atleta: incomingUser || incoming.atleta,
+          usuario: incomingUser || incoming.usuario,
+          usuarios: incomingUser || incoming.usuarios
+        }
+      })
+
+      // Conservar cualquier reserva temporal optimista que aún no haya llegado en la respuesta
+      const pendingOptimistic = prev.filter((p: any) => 
+        p.id && String(p.id).startsWith('temp-') && !updated.some((u: any) => (p.usuario_id && u.usuario_id === p.usuario_id) || u.id === p.id)
+      )
+
+      return [...updated, ...pendingOptimistic]
+    })
   }, [clase.reservas])
 
   // B: Walk-in search
@@ -49,7 +95,7 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
 
   const handleOtpChange = (index: number, value: string) => {
     if (!/^\d*$/.test(value)) return
-    
+
     const newOtp = [...otp]
     newOtp[index] = value
     setOtp(newOtp)
@@ -65,13 +111,16 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
     }
   }
 
-  const handleToggleAsistencia = async (reservaId: string, currentAsistio: boolean) => {
+  const handleMarcarAsistencia = async (reservaId: string, nuevoEstado: 'ASISTIDA' | 'AUSENTE') => {
     setLoadingAction(`asistencia-${reservaId}`)
     try {
-      const res = await toggleAsistencia(reservaId, !currentAsistio)
+      const res = await marcarAsistencia(reservaId, nuevoEstado)
       if (res.success) {
-        toast.success(!currentAsistio ? 'Asistencia registrada' : 'Asistencia removida')
-        setParticipantesLocales(prev => prev.map(r => r.id === reservaId ? { ...r, asistio_fisicamente: !currentAsistio } : r))
+        setParticipantesLocales(prev => prev.map(r => r.id === reservaId ? { 
+          ...r, 
+          asistio_fisicamente: nuevoEstado === 'ASISTIDA',
+          estado_reserva: nuevoEstado 
+        } : r))
       } else {
         toast.error(res.error || 'Error al cambiar asistencia')
       }
@@ -82,45 +131,74 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
     }
   }
 
-  const handleSearchAtleta = async (q: string) => {
-    setSearchQuery(q)
-    if (q.length < 3) {
+  // Búsqueda con debounce (300ms) y cancelación de respuestas tardías para no saturar el servidor ni congelar la UI
+  useEffect(() => {
+    const trimmed = searchQuery.trim()
+    if (trimmed.length < 2) {
       setSearchResults([])
+      setIsSearching(false)
       return
     }
+
     setIsSearching(true)
-    const { data } = await supabase
-      .from('usuarios')
-      .select('id, nombre_completo, cedula_rif, email, telefono, suscripciones(id, estado, sesiones_restantes, planes(tipo, nombre))')
-      .eq('sede_id', activeSede?.id)
-      .eq('rol', 'ATLETA')
-      .or(`nombre_completo.ilike.%${q}%,cedula_rif.ilike.%${q}%`)
-      .limit(5)
-    
-    setSearchResults(data || [])
-    setIsSearching(false)
-  }
+    let isCancelled = false
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await buscarAtletasParaWalkIn(trimmed)
+        if (!isCancelled) {
+          if (res.success && res.data) {
+            setSearchResults(res.data)
+          } else {
+            setSearchResults([])
+          }
+        }
+      } catch {
+        if (!isCancelled) setSearchResults([])
+      } finally {
+        if (!isCancelled) setIsSearching(false)
+      }
+    }, 300)
+
+    return () => {
+      isCancelled = true
+      clearTimeout(timer)
+    }
+  }, [searchQuery])
 
   const handleRegistrarWalkIn = async (usuarioId: string) => {
+    const userToBook = searchResults.find(u => u.id === usuarioId)
+    const isActivo = Array.isArray(userToBook?.suscripciones)
+      ? userToBook.suscripciones.some((s: any) => s.estado === 'ACTIVO')
+      : false
+
+    if (!isActivo) {
+      toast.error('El atleta está inactivo.')
+      return
+    }
+
     setLoadingAction(`walkin-${usuarioId}`)
     try {
       const res = await registrarWalkIn(clase.id, usuarioId)
       if (res.success) {
         toast.success('Atleta agregado a la clase')
         setActiveTab('A')
-        
+
         const addedUser = searchResults.find(u => u.id === usuarioId)
         if (addedUser) {
+          const nuevaReservaId = res.reserva_id || res.reservaId || `temp-walkin-${Date.now()}`
           setParticipantesLocales(prev => [...prev, {
-            id: `temp-walkin-${Date.now()}`,
+            id: nuevaReservaId,
             asistio_fisicamente: true,
+            estado_reserva: 'CONFIRMADA',
             es_clase_prueba: false,
-            usuarios: addedUser
+            atleta: addedUser
           }])
         }
 
         setSearchQuery('')
         setSearchResults([])
+        onUpdate?.()
       } else {
         toast.error(res.error || 'Error al agregar atleta')
       }
@@ -139,10 +217,10 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
       setProspectoStep(2)
       return
     }
-    
+
     if (prospectoStep === 2) {
       if (!leadTelefonoNum) return toast.error('Ingresa el teléfono')
-      
+
       setLoadingAction('lead')
       try {
         const fullTelefono = `${leadTelefonoCodigo}${leadTelefonoNum}`
@@ -171,7 +249,7 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
         const fullNombre = `${leadNombre} ${leadApellido}`.trim()
         const fullCedula = `${leadCedulaTipo}-${leadCedulaNum}`
         const fullTelefono = `${leadTelefonoCodigo}${leadTelefonoNum}`
-        
+
         // 1. Validar OTP
         const valRes = await validarOtp(fullTelefono, codigo, { isLead: true })
         if (!valRes.success) {
@@ -185,15 +263,42 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
         if (res.success) {
           toast.success('Clase de prueba registrada con éxito')
           setActiveTab('A')
-          
-          setParticipantesLocales(prev => [...prev, {
-            id: `temp-lead-${Date.now()}`,
+
+          const resAny = res as any
+          const nuevaReservaId = resAny.reserva_id || resAny.reservaId || resAny.reserva?.id || `temp-lead-${Date.now()}`
+          const atletaData = resAny.usuarioGenerado || resAny.atleta || resAny.usuario || resAny.usuarios || resAny.reserva?.atleta || {
+            id: nuevaReservaId,
+            nombre_completo: fullNombre,
+            nombre: fullNombre,
+            telefono: fullTelefono,
+            cedula_rif: fullCedula,
+            suscripciones: [{ estado: 'ACTIVO', sesiones_restantes: 0, planes: { tipo: 'SESIONES', nombre: 'Clase de Prueba' } }]
+          }
+          const leadUserId = atletaData?.id || resAny.reserva?.usuario_id || resAny.usuarioGenerado?.id
+
+          const nuevaReserva = resAny.reserva ? {
+            ...resAny.reserva,
+            id: nuevaReservaId,
+            usuario_id: leadUserId,
+            nombre_completo: fullNombre,
+            atleta: atletaData,
+            usuario: atletaData,
+            usuarios: atletaData
+          } : {
+            id: nuevaReservaId,
+            usuario_id: leadUserId,
+            clase_id: clase.id,
+            estado_reserva: 'ASISTIDA',
             asistio_fisicamente: true,
             es_clase_prueba: true,
-            usuarios: res.usuarioGenerado
-          }])
+            nombre_completo: fullNombre,
+            atleta: atletaData,
+            usuario: atletaData,
+            usuarios: atletaData
+          }
 
-          setActiveTab('A')
+          setParticipantesLocales(prev => [...prev, nuevaReserva])
+
           setProspectoStep(1)
           setOtp(['', '', '', '', '', ''])
           setLeadNombre('')
@@ -201,6 +306,7 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
           setLeadCedulaNum('')
           setLeadTelefonoNum('')
           setLeadFechaNacimiento('')
+          onUpdate?.()
         } else {
           toast.error(res.error || 'Error al registrar clase de prueba')
         }
@@ -219,23 +325,23 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
     <div className="flex-1 flex flex-col h-full bg-black/30 border border-white/5 rounded-xl overflow-hidden mt-4">
       {/* Tabs */}
       <div className="flex border-b border-white/10 bg-black/40 text-xs font-bold text-gray-400">
-        <button 
+        <button
           onClick={() => setActiveTab('A')}
           className={`flex-1 p-3 text-center transition-colors border-b-2 ${activeTab === 'A' ? 'text-white border-[#02D7E5] bg-[#02D7E5]/5' : 'border-transparent hover:text-white'}`}
         >
           Participantes ({reservasCount})
         </button>
-        <button 
+        <button
           onClick={() => setActiveTab('B')}
           className={`flex-1 p-3 text-center transition-colors border-b-2 ${activeTab === 'B' ? 'text-white border-[#02D7E5] bg-[#02D7E5]/5' : 'border-transparent hover:text-white'}`}
         >
           + Atleta
         </button>
-        <button 
+        <button
           onClick={() => setActiveTab('C')}
           className={`flex-1 p-3 text-center transition-colors border-b-2 ${activeTab === 'C' ? 'text-white border-[#02D7E5] bg-[#02D7E5]/5' : 'border-transparent hover:text-white'}`}
         >
-          + Prospecto
+          Clase de Prueba
         </button>
       </div>
 
@@ -249,38 +355,65 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
               </div>
             ) : (
               participantesLocales.map((res: any) => {
-                const isAsistio = res.asistio_fisicamente === true
-                const user = res.usuarios
+                const isAsistio = res.estado_reserva === 'ASISTIDA'
+                const isFalto = res.estado_reserva === 'AUSENTE'
+                const rawUser = res.atleta || res.usuario || res.usuarios || (res.nombre_completo ? res : null)
+                const user = Array.isArray(rawUser) ? rawUser[0] : rawUser
+                const nombreAtleta = user?.nombre_completo || user?.nombre || res?.nombre_completo || res?.nombre || 'Desconocido'
                 const isWalkIn = false // Columna origen_reserva eliminada del esquema
                 const isPrueba = res.es_clase_prueba === true
-                const subs = Array.isArray(user?.suscripciones) ? user.suscripciones[0] : null
-                const isSesiones = subs?.planes?.tipo === 'SESIONES'
-                
+                const rawSubs = user?.suscripciones ?? res?.suscripciones
+                const subs = Array.isArray(rawSubs) ? rawSubs[0] : rawSubs
+                const isSesiones = subs?.planes?.tipo === 'SESIONES' || subs?.plan?.tipo === 'SESIONES'
+
                 return (
-                  <div key={res.id} className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${isAsistio ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-white/5 border-white/10 hover:bg-white/10'}`}>
+                  <div key={res.id} className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${isAsistio ? 'bg-emerald-500/10 border-emerald-500/30' : isFalto ? 'bg-red-500/10 border-red-500/30' : 'bg-white/5 border-white/10 hover:bg-white/10'}`}>
                     <div className="flex items-center gap-3">
-                      <button 
-                        onClick={() => handleToggleAsistencia(res.id, isAsistio)}
-                        disabled={loadingAction === `asistencia-${res.id}`}
-                        className="text-gray-400 hover:text-emerald-400 transition-colors shrink-0"
-                      >
-                        {loadingAction === `asistencia-${res.id}` ? (
-                          <Loader2 className="w-6 h-6 animate-spin text-emerald-500" />
-                        ) : isAsistio ? (
-                          <CheckCircle2 className="w-6 h-6 text-emerald-500" />
-                        ) : (
-                          <Circle className="w-6 h-6" />
-                        )}
-                      </button>
+                      <div className="flex flex-row items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => handleMarcarAsistencia(res.id, 'ASISTIDA')}
+                          disabled={loadingAction === `asistencia-${res.id}`}
+                          title="Marcar Asistencia"
+                          className={`transition-colors flex items-center justify-center p-1 rounded-full border ${
+                            isAsistio 
+                              ? 'bg-emerald-500 border-emerald-500 text-black' 
+                              : 'border-white/20 text-gray-400 hover:border-white/40 hover:text-white hover:bg-white/10'
+                          }`}
+                        >
+                          {loadingAction === `asistencia-${res.id}` && isAsistio ? (
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="w-5 h-5" />
+                          )}
+                        </button>
+
+                        <button
+                          onClick={() => handleMarcarAsistencia(res.id, 'AUSENTE')}
+                          disabled={loadingAction === `asistencia-${res.id}`}
+                          title="Marcar Ausencia"
+                          className={`transition-colors flex items-center justify-center p-1 rounded-full border ${
+                            isFalto 
+                              ? 'bg-red-500 border-red-500 text-black' 
+                              : 'border-white/20 text-gray-400 hover:border-white/40 hover:text-white hover:bg-white/10'
+                          }`}
+                        >
+                          {loadingAction === `asistencia-${res.id}` && isFalto ? (
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                          ) : (
+                            <XCircle className="w-5 h-5" />
+                          )}
+                        </button>
+                      </div>
+
                       <div>
-                        <p className={`font-bold text-sm flex items-center gap-2 ${isAsistio ? 'text-emerald-50' : 'text-white'}`}>
-                          {user?.nombre_completo || 'Desconocido'}
+                        <p className={`font-bold text-sm flex items-center gap-2 ${isAsistio ? 'text-emerald-50' : isFalto ? 'text-red-50' : 'text-white'}`}>
+                          {nombreAtleta}
                           {isWalkIn && <span className="text-[9px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded uppercase font-black">Walk-in</span>}
                           {isPrueba && <span className="text-[9px] bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded uppercase font-black">Prueba</span>}
                         </p>
                         {isSesiones && (
-                          <p className={`text-xs mt-0.5 font-medium ${isAsistio ? 'text-emerald-400/80' : 'text-gray-400'}`}>
-                            {subs.sesiones_restantes} Sesiones restantes
+                          <p className={`text-xs mt-0.5 font-medium ${isAsistio ? 'text-emerald-400/80' : isFalto ? 'text-red-400/80' : 'text-gray-400'}`}>
+                            {subs?.sesiones_restantes ?? 0} Sesiones restantes
                           </p>
                         )}
                       </div>
@@ -296,19 +429,19 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
         {activeTab === 'B' && (
           <div className="space-y-4">
             {isFull ? (
-               <div className="p-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-sm flex items-center gap-3">
-                 <AlertCircle className="w-5 h-5 shrink-0" />
-                 <p>La clase ha alcanzado su aforo máximo ({clase.aforo_maximo}). No puedes agregar más walk-ins.</p>
-               </div>
+              <div className="p-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-sm flex items-center gap-3">
+                <AlertCircle className="w-5 h-5 shrink-0" />
+                <p>La clase ha alcanzado su aforo máximo ({clase.aforo_maximo}). No puedes agregar más walk-ins.</p>
+              </div>
             ) : (
               <>
                 <div className="relative">
                   <Search className="w-4 h-4 absolute left-3 top-3 text-gray-500" />
                   <input
                     type="text"
-                    placeholder="Buscar atleta por nombre..."
+                    placeholder="Buscar atleta por nombre o cédula..."
                     value={searchQuery}
-                    onChange={(e) => handleSearchAtleta(e.target.value)}
+                    onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full bg-black/40 border border-white/10 text-white text-sm rounded-lg pl-9 pr-4 py-2.5 focus:outline-none focus:border-[#02D7E5] transition-colors"
                   />
                   {isSearching && <Loader2 className="w-4 h-4 absolute right-3 top-3 text-[#02D7E5] animate-spin" />}
@@ -316,31 +449,60 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
 
                 <div className="space-y-2">
                   {searchResults.map(user => {
-                     const isAlreadyBooked = participantesLocales.some((r: any) => r.usuarios?.id === user.id)
-                     const subs = Array.isArray(user.suscripciones) ? user.suscripciones[0] : null
-                     const activeOrInactive = subs?.estado === 'ACTIVO' || subs?.estado === 'INACTIVO'
+                    const isAlreadyBooked = participantesLocales.some((r: any) => r.atleta?.id === user.id)
+                    const isActivo = Array.isArray(user.suscripciones)
+                      ? user.suscripciones.some((s: any) => s.estado === 'ACTIVO')
+                      : false
 
-                     return (
-                       <div key={user.id} className="flex items-center justify-between p-3 rounded-lg border border-white/5 bg-black/20">
-                         <div>
-                           <p className="font-bold text-sm text-white">{user.nombre_completo}</p>
-                           {activeOrInactive && subs?.planes?.nombre ? (
-                              <p className="text-xs text-emerald-400 mt-0.5">{subs.planes.nombre} • {subs.sesiones_restantes || 0} disp.</p>
-                           ) : (
-                              <p className="text-xs text-gray-500 mt-0.5">Sin plan activo</p>
-                           )}
-                         </div>
-                         <button
-                           onClick={() => handleRegistrarWalkIn(user.id)}
-                           disabled={isAlreadyBooked || loadingAction === `walkin-${user.id}`}
-                           className="bg-[#02D7E5]/10 text-[#02D7E5] hover:bg-[#02D7E5] hover:text-black font-bold text-xs px-3 py-1.5 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                         >
-                           {loadingAction === `walkin-${user.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : (isAlreadyBooked ? 'Registrado' : 'Agregar')}
-                         </button>
-                       </div>
-                     )
+                    return (
+                      <div 
+                        key={user.id} 
+                        className={`flex items-center justify-between p-3 rounded-lg border transition-all ${
+                          !isActivo 
+                            ? 'border-white/5 bg-white/[0.01] opacity-60' 
+                            : 'border-white/10 bg-white/[0.02] hover:border-white/20'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <p className={`font-bold text-sm truncate ${isActivo ? 'text-white' : 'text-gray-400'}`}>
+                            {user.nombre_completo}
+                          </p>
+                          {isActivo ? (
+                            <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/20 shrink-0">
+                              ACTIVO
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-[10px] font-bold text-gray-400 border border-white/10 shrink-0">
+                              INACTIVO
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={() => isActivo && !isAlreadyBooked && handleRegistrarWalkIn(user.id)}
+                          disabled={!isActivo || isAlreadyBooked || loadingAction === `walkin-${user.id}`}
+                          className={`font-bold text-xs px-3.5 py-1.5 rounded-lg border transition-colors shrink-0 ${
+                            !isActivo
+                              ? 'border-white/10 text-gray-500 bg-white/[0.02] cursor-not-allowed'
+                              : isAlreadyBooked
+                              ? 'border-white/10 text-gray-500 bg-transparent cursor-not-allowed'
+                              : 'border-white/20 text-white hover:bg-white/10 hover:border-white/40'
+                          }`}
+                        >
+                          {loadingAction === `walkin-${user.id}` ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : isAlreadyBooked ? (
+                            'Registrado'
+                          ) : !isActivo ? (
+                            'Inactivo'
+                          ) : (
+                            'Agregar'
+                          )}
+                        </button>
+                      </div>
+                    )
                   })}
-                  {searchQuery.length >= 3 && searchResults.length === 0 && !isSearching && (
+                  {searchQuery.length >= 2 && searchResults.length === 0 && !isSearching && (
                     <p className="text-xs text-gray-500 text-center py-4">No se encontraron atletas.</p>
                   )}
                 </div>
@@ -353,19 +515,18 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
         {activeTab === 'C' && (
           <div>
             {isFull ? (
-               <div className="p-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-sm flex items-center gap-3">
-                 <AlertCircle className="w-5 h-5 shrink-0" />
-                 <p>La clase ha alcanzado su aforo máximo. No hay cupo para pruebas.</p>
-               </div>
+              <div className="p-4 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-sm flex items-center gap-3">
+                <AlertCircle className="w-5 h-5 shrink-0" />
+                <p>La clase ha alcanzado su aforo máximo. No hay cupo para pruebas.</p>
+              </div>
             ) : (
               <form onSubmit={handleRegistrarLead} className="space-y-4">
                 {/* Progress Indicators */}
                 <div className="flex justify-between items-center mb-6">
                   {[1, 2, 3].map((step) => (
                     <div key={step} className="flex flex-col items-center w-1/3">
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
-                        prospectoStep === step ? 'bg-[#02D7E5] text-black' : prospectoStep > step ? 'bg-[#02D7E5]/30 text-[#02D7E5]' : 'bg-black/50 text-gray-500 border border-white/10'
-                      }`}>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${prospectoStep === step ? 'bg-[#02D7E5] text-black' : prospectoStep > step ? 'bg-[#02D7E5]/30 text-[#02D7E5]' : 'bg-black/50 text-gray-500 border border-white/10'
+                        }`}>
                         {step}
                       </div>
                       <span className={`text-[10px] mt-1 font-medium ${prospectoStep === step ? 'text-[#02D7E5]' : 'text-gray-500'}`}>
@@ -474,20 +635,20 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
                       Se ha enviado un código OTP a <span className="text-white font-bold">{leadTelefonoCodigo} {leadTelefonoNum}</span>.
                     </p>
                     <div className="flex justify-center gap-2 my-6">
-                       {otp.map((digit, index) => (
-                         <input
-                           key={index}
-                           ref={el => { inputRefs.current[index] = el }}
-                           type="text"
-                           maxLength={1}
-                           value={digit}
-                           onChange={e => handleOtpChange(index, e.target.value)}
-                           onKeyDown={e => handleOtpKeyDown(index, e)}
-                           disabled={loadingAction === 'lead'}
-                           className="w-10 h-12 bg-black/40 border border-white/10 rounded flex items-center justify-center text-white text-lg font-bold text-center focus:outline-none focus:border-[#02D7E5] focus:ring-1 focus:ring-[#02D7E5]"
-                           autoFocus={index === 0}
-                         />
-                       ))}
+                      {otp.map((digit, index) => (
+                        <input
+                          key={index}
+                          ref={el => { inputRefs.current[index] = el }}
+                          type="text"
+                          maxLength={1}
+                          value={digit}
+                          onChange={e => handleOtpChange(index, e.target.value)}
+                          onKeyDown={e => handleOtpKeyDown(index, e)}
+                          disabled={loadingAction === 'lead'}
+                          className="w-10 h-12 bg-black/40 border border-white/10 rounded flex items-center justify-center text-white text-lg font-bold text-center focus:outline-none focus:border-[#02D7E5] focus:ring-1 focus:ring-[#02D7E5]"
+                          autoFocus={index === 0}
+                        />
+                      ))}
                     </div>
                     {errorVisual && (
                       <p className="text-red-400 text-sm font-medium mt-3">{errorVisual}</p>
@@ -525,7 +686,8 @@ export default function RecepcionPanel({ clase, activeSede, onUpdate, onClose }:
         )}
       </div>
 
-      <style dangerouslySetInnerHTML={{__html: `
+      <style dangerouslySetInnerHTML={{
+        __html: `
         .hide-scrollbar::-webkit-scrollbar {
           display: none;
         }

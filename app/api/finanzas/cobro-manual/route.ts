@@ -8,7 +8,39 @@ import { emitirCobroR4 } from '@/src/services/r4-service';
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const contentType = request.headers.get('content-type') || '';
+    let body: any = {};
+    let fileBuffer: Buffer | null = null;
+    let fileName = '';
+    let fileType = '';
+
+    if (contentType.includes('multipart/form-data')) {
+      const formData = await request.formData();
+      body = {
+        suscripcion_id: formData.get('suscripcion_id'),
+        usuario_id: formData.get('usuario_id'),
+        plan_id: formData.get('plan_id'),
+        monto: formData.get('monto'),
+        metodo_pago: formData.get('metodo_pago'),
+        referencia: formData.get('referencia'),
+        responsable_id: formData.get('responsable_id'),
+        responsable_nombre: formData.get('responsable_nombre'),
+        origin: formData.get('origin'),
+      };
+      const pd = formData.get('pagos_desglosados');
+      if (pd) body.pagos_desglosados = JSON.parse(pd as string);
+
+      const file = formData.get('comprobante') as File | null;
+      if (file && file.size > 0) {
+        fileName = Date.now() + '-' + file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+        fileType = file.type;
+        const arrayBuffer = await file.arrayBuffer();
+        fileBuffer = Buffer.from(arrayBuffer);
+      }
+    } else {
+      body = await request.json();
+    }
+
     const {
       suscripcion_id,
       usuario_id,
@@ -18,7 +50,8 @@ export async function POST(request: Request) {
       referencia,
       pagos_desglosados,
       responsable_id,
-      responsable_nombre
+      responsable_nombre,
+      origin
     } = body;
 
     // Validaciones básicas
@@ -62,23 +95,41 @@ export async function POST(request: Request) {
       realResponsableNombre = adminProfile?.nombre_completo || user.email;
     }
 
-    // Flujo B (Renovación) vs Flujo A (Creación Nueva)
-    let suscripcion: any = null;
-    
+    // Flujo Inteligente: Si no nos pasan suscripcion_id, intentamos buscar si el usuario ya tiene una
+    let suscripcionDb = null;
     if (!isFlujoNueva) {
       const { data: subDb, error: subError } = await supabaseAdmin
         .from('suscripciones')
-        .select('id, usuario_id, fecha_corte, estado, sesiones_restantes, metadata, planes(tipo, sesiones_total)')
+        .select('id, usuario_id, plan_id, fecha_corte, estado, sesiones_restantes, metadata, planes(tipo, sesiones_total, nombre, precio_usd)')
         .eq('id', suscripcion_id)
         .single();
 
       if (subError || !subDb) {
-        console.error('[Cobro Manual] Error buscando suscripción:', subError?.message);
+        console.error('[Cobro Manual] Error buscando suscripción por ID:', subError?.message);
         return NextResponse.json({ error: 'Suscripción no encontrada' }, { status: 404 });
       }
-      suscripcion = subDb;
+      suscripcionDb = subDb;
     } else {
-      // Flujo A: Crear la suscripción de forma transparente si no existe
+      // Buscar si el usuario ya tiene una suscripcion (aunque sea inactiva)
+      const { data: existingSub } = await supabaseAdmin
+        .from('suscripciones')
+        .select('id, usuario_id, plan_id, fecha_corte, estado, sesiones_restantes, metadata, planes(tipo, sesiones_total, nombre, precio_usd)')
+        .eq('usuario_id', usuario_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingSub) {
+        suscripcionDb = existingSub;
+      }
+    }
+
+    let suscripcion: any = null;
+    
+    if (suscripcionDb) {
+      suscripcion = suscripcionDb;
+    } else {
+      // Flujo A: Crear la suscripción de forma transparente si realmente no existe ninguna
       const { data: planData, error: planErr } = await supabaseAdmin
         .from('planes')
         .select('tipo, sesiones_total')
@@ -98,7 +149,7 @@ export async function POST(request: Request) {
           fecha_corte: getCaracasMidnightUTC(0).toISOString(),
           sesiones_restantes: planData.tipo === 'SESIONES' ? 0 : null
         })
-        .select('id, usuario_id, fecha_corte, estado, sesiones_restantes, metadata, planes(tipo, sesiones_total)')
+        .select('id, usuario_id, plan_id, fecha_corte, estado, sesiones_restantes, metadata, planes(tipo, sesiones_total, nombre, precio_usd)')
         .single();
         
       if (createSubErr || !newSub) {
@@ -133,15 +184,42 @@ export async function POST(request: Request) {
       usuario = userData;
     }
     
-    // Paso B (Time-Stacking): Calcula la nueva fecha de corte
+    // Paso A (Búsqueda de Deuda)
     const hoy = getCaracasMidnightUTC(0);
-    let nuevaFechaCorte = new Date(fechaCorteAnterior);
+    const hace7Dias = new Date(hoy.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    
+    const { data: ordenFallida } = await supabaseAdmin
+      .from('ordenes_cobro')
+      .select('created_at')
+      .eq('usuario_id', suscripcion.usuario_id)
+      .in('estado', ['RECHAZADO', 'ANULADA', 'CANCELADO']) // Agregados posibles estados
+      .gte('created_at', hace7Dias)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    // Si la fecha_corte_anterior ya pasó (está vencido), sumamos al día de hoy.
-    // Si no ha pasado (renovación anticipada), sumamos a la fecha_corte_anterior.
-    if (fechaCorteAnterior < hoy) {
-      nuevaFechaCorte = new Date(hoy);
+    // Paso B (Definición de fechaBase)
+    let fechaBase = new Date(fechaCorteAnterior);
+
+    // Detección de Clase de Prueba
+    const planesAnterior = Array.isArray(suscripcion.planes) ? suscripcion.planes[0] : suscripcion.planes;
+    const isPlanAnteriorPrueba = planesAnterior && (
+      (planesAnterior as any).precio_usd === 0 || 
+      (planesAnterior as any).nombre?.toLowerCase().includes('prueba')
+    );
+
+    if (ordenFallida && ordenFallida.created_at) {
+      // Condición 1 (Viene de un pago fallido reciente)
+      fechaBase = new Date(ordenFallida.created_at);
+    } else if (isPlanAnteriorPrueba) {
+      // Condición 2 (Transición de Clase de Prueba)
+      fechaBase = new Date(hoy);
+    } else if (fechaCorteAnterior < hoy) {
+      // Condición 3 (Renovación normal vencida)
+      fechaBase = new Date(hoy);
     }
+
+    let nuevaFechaCorte = new Date(fechaBase);
     
     // Sumamos 1 mes
     nuevaFechaCorte.setUTCMonth(nuevaFechaCorte.getUTCMonth() + 1);
@@ -151,7 +229,7 @@ export async function POST(request: Request) {
     const isSesiones = (planesObj as any)?.tipo === 'SESIONES';
     
     const metadata: MetadataOrden = {
-      origin: 'recepcion-manual',
+      origin: origin === 'self-service' ? 'self-service' : 'recepcion-manual',
       timestamp: new Date().toISOString(),
       responsable_id: realResponsableId,
       responsable_nombre: realResponsableNombre,
@@ -160,8 +238,30 @@ export async function POST(request: Request) {
       referencia: referencia || undefined,
       pagos_desglosados: pagos_desglosados || undefined,
       fecha_corte_anterior: suscripcion.fecha_corte || undefined, // Guardar el string ISO original
+      fecha_base_calculo: fechaBase.toISOString(), // Snapshot de la fecha de anclaje utilizada
+      plan_id_anterior: suscripcion.plan_id || undefined,
       ...(isSesiones ? { sesiones_anteriores: suscripcion.sesiones_restantes || 0 } : {})
     };
+
+    // Subida de imagen si existe comprobante
+    if (fileBuffer) {
+      try {
+        const { error: uploadError } = await supabaseAdmin.storage
+          .from('comprobantes')
+          .upload(fileName, fileBuffer, { contentType: fileType });
+          
+        if (!uploadError) {
+          const { data: { publicUrl } } = supabaseAdmin.storage
+            .from('comprobantes')
+            .getPublicUrl(fileName);
+          metadata.comprobante_url = publicUrl;
+        } else {
+          console.error('[Cobro Manual] Error subiendo comprobante:', uploadError.message);
+        }
+      } catch (err) {
+        console.error('[Cobro Manual] Error subiendo comprobante:', err);
+      }
+    }
 
     const estadoOrden: EstadoOrden = hasCobroMovil ? 'PENDIENTE' : 'POR_CONCILIAR';
 
@@ -185,6 +285,7 @@ export async function POST(request: Request) {
 
     // SEGUNDO: Actualización Optimista a la Suscripción
     const payloadSubUpdate: any = {
+      plan_id: plan_id,
       estado: 'ACTIVO',
       fecha_corte: nuevaFechaCorte.toISOString(),
       metadata: suscripcion.metadata || {}
@@ -213,6 +314,7 @@ export async function POST(request: Request) {
         console.error('[Cobro Manual] Error actualizando suscripción optimista:', updateSubError.message);
         throw new Error('Error actualizando la suscripción');
       }
+
     };
 
     if (hasCobroMovil) {

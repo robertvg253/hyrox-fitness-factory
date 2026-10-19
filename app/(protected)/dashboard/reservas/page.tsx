@@ -1,22 +1,24 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { Calendar as CalendarIcon, Clock, Users, ArrowRight, User, AlertTriangle, Loader2, CheckCircle2 } from 'lucide-react'
+import { Calendar as CalendarIcon, Clock, Users, ArrowRight, User, AlertTriangle, Loader2, CheckCircle2, Lock } from 'lucide-react'
 import { createClient } from '@/src/utils/supabase/client'
-import { reservarClase } from '@/app/(protected)/dashboard/actions'
+import { reservarClase, obtenerClasesSede } from '@/app/(protected)/dashboard/actions'
+import Link from 'next/link'
+import toast from 'react-hot-toast'
 
 export default function ReservasPage() {
   const [activeDay, setActiveDay] = useState<'HOY' | 'MANANA'>('HOY')
   
   const [user, setUser] = useState<any>(null)
-  const [userStatus, setUserStatus] = useState<string>('ACTIVO')
+  const [puedeAgendar, setPuedeAgendar] = useState<boolean>(true)
   const [clases, setClases] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
-  const [toast, setToast] = useState<{type: 'success'|'error', msg: string} | null>(null)
   const [isAfter9PM, setIsAfter9PM] = useState(false)
   const [sedesPermitidas, setSedesPermitidas] = useState<{id: string, nombre: string}[]>([])
   const [sedeSeleccionada, setSedeSeleccionada] = useState<string | null>(null)
+  const [etiquetaLead, setEtiquetaLead] = useState<string | null>(null)
 
   const supabase = createClient()
 
@@ -31,20 +33,14 @@ export default function ReservasPage() {
     const queryStart = now.toISOString()
     const queryEnd = after9 ? tomorrowEnd.toISOString() : todayEnd.toISOString()
 
-    let query = supabase
-      .from('clases_programadas')
-      .select('*, disciplinas(nombre, color_hex), instructores(nombre), reservas(id, usuario_id, estado_reserva)')
-      .gte('fecha_hora_inicio', queryStart)
-      .lte('fecha_hora_inicio', queryEnd)
-      .order('fecha_hora_inicio', { ascending: true })
-
     if (targetSedeId) {
-      query = query.eq('sede_id', targetSedeId)
+      const res = await obtenerClasesSede(targetSedeId, queryStart, queryEnd)
+      if (res.success && res.data) {
+        setClases(res.data)
+      } else {
+        setClases([])
+      }
     }
-
-    const { data, error } = await query
-
-    if (!error) setClases(data || [])
   }
 
   useEffect(() => {
@@ -55,7 +51,7 @@ export default function ReservasPage() {
       const { data: { user: authUser }, error: authError } = await supabase.auth.getUser()
 
       if (authError || !authUser?.id) {
-        setToast({ type: 'error', msg: 'Sesión no válida. Por favor inicia sesión nuevamente.' })
+        toast.error('Sesión no válida. Por favor inicia sesión nuevamente.')
         setIsLoading(false)
         return
       }
@@ -76,38 +72,65 @@ export default function ReservasPage() {
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
+
+      const { data: userData } = await supabase
+        .from('usuarios')
+        .select('sede_id, etiqueta_lead')
+        .eq('id', authUser.id)
+        .single()
         
-      let currentSede = null
-
-      if (subActiva) {
-         const planesObj = Array.isArray(subActiva?.planes) ? subActiva.planes[0] : subActiva?.planes;
-         const isIlimitado = (planesObj as any)?.tipo === 'TIEMPO'
-         const sesionesDisponibles = subActiva.sesiones_restantes || 0
-         
-         if (!isIlimitado && sesionesDisponibles <= 0) {
-           setUserStatus('SIN_SESIONES')
-         } else {
-           setUserStatus(subActiva.estado || 'VENCIDO')
-         }
-
-         const sedesIds = (planesObj as any)?.sedes || []
-         if (sedesIds.length > 0) {
-           const { data: sedesData } = await supabase
-             .from('sedes')
-             .select('id, nombre')
-             .in('id', sedesIds)
-           
-           if (sedesData && sedesData.length > 0) {
-             setSedesPermitidas(sedesData)
-             setSedeSeleccionada(sedesData[0].id)
-             currentSede = sedesData[0].id
-           }
-         }
-      } else {
-        setUserStatus('VENCIDO')
+      if (userData) {
+        setEtiquetaLead(userData.etiqueta_lead)
       }
 
-      await refetchClases(authUser.id, after9, currentSede)
+      let currentSede = null
+      let apto = false;
+
+      if (subActiva) {
+        const estaActivo = subActiva.estado === 'ACTIVO';
+        const planesObj = Array.isArray(subActiva.planes) ? subActiva.planes[0] : subActiva.planes;
+        const isIlimitado = (planesObj as any)?.tipo === 'TIEMPO';
+        const tieneSesiones = isIlimitado || subActiva.sesiones_restantes === null || subActiva.sesiones_restantes > 0;
+        
+        if (estaActivo && tieneSesiones) {
+            apto = true;
+        }
+
+        const sedesIds = (planesObj as any)?.sedes || [];
+        if (sedesIds.length > 0) {
+          const { data: sedesData } = await supabase
+            .from('sedes')
+            .select('id, nombre')
+            .in('id', sedesIds);
+          
+          if (sedesData && sedesData.length > 0) {
+            setSedesPermitidas(sedesData);
+            setSedeSeleccionada(sedesData[0].id);
+            currentSede = sedesData[0].id;
+          }
+        }
+      }
+
+      // Fallback: Si no tiene suscripción activa o no tiene sedes en su plan, 
+      // usar la sede principal de su perfil.
+      if (!currentSede && userData?.sede_id) {
+        const { data: sedesData } = await supabase
+          .from('sedes')
+          .select('id, nombre')
+          .eq('id', userData.sede_id);
+          
+        if (sedesData && sedesData.length > 0) {
+          setSedesPermitidas(sedesData);
+          setSedeSeleccionada(sedesData[0].id);
+          currentSede = sedesData[0].id;
+        }
+      }
+
+      setPuedeAgendar(apto);
+
+      if (currentSede) {
+        await refetchClases(authUser.id, after9, currentSede);
+      }
       setIsLoading(false)
     }
 
@@ -143,17 +166,13 @@ export default function ReservasPage() {
     }
   }, [sedeSeleccionada])
 
-  useEffect(() => {
-    if (toast) {
-      const timer = setTimeout(() => setToast(null), 4000)
-      return () => clearTimeout(timer)
-    }
-  }, [toast])
+
+
 
   const handleReservar = async (claseId: string) => {
     // Guard Clause: no ejecutar si no hay usuario válido
     if (!user?.id) {
-      setToast({ type: 'error', msg: 'Sesión no válida. Recarga la página.' })
+      toast.error('Sesión no válida. Recarga la página.')
       return
     }
     setActionLoading(claseId)
@@ -162,14 +181,14 @@ export default function ReservasPage() {
       const res = await reservarClase(claseId, user.id)
 
       if (!res.success) {
-        setToast({ type: 'error', msg: res.error || 'Error al procesar la reserva.' })
+        toast.error(res.error || 'Error al procesar la reserva.')
       } else {
-        setToast({ type: 'success', msg: '¡Clase reservada con éxito! 🎉' })
+        toast.success('¡Clase reservada con éxito! 🎉')
         const now = new Date()
         await refetchClases(user.id, now.getHours() >= 21, sedeSeleccionada)
       }
     } catch (err: any) {
-      setToast({ type: 'error', msg: 'Error de comunicación con el servidor. Intenta de nuevo.' })
+      toast.error('Error de comunicación con el servidor. Intenta de nuevo.')
     } finally {
       setActionLoading(null)
     }
@@ -208,33 +227,13 @@ export default function ReservasPage() {
     }, {} as Record<string, any[]>)
   }, [filteredClases])
 
-  const isBlocked = userStatus === 'VENCIDO' || userStatus === 'MOROSO'
+  // Removed the early return to show a FOMO view
 
   return (
     <main className="p-6 space-y-8 bg-black min-h-screen relative">
       
-      {/* Toast Notification — Diseño mejorado con padding, icono, sombra */}
-      {toast && (
-        <div
-          className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-3rem)] max-w-sm rounded-xl shadow-lg border backdrop-blur-xl transition-all ${
-            toast.type === 'success'
-              ? 'bg-emerald-950/90 border-emerald-500/30 text-emerald-300'
-              : 'bg-red-950/90 border-red-500/30 text-red-300'
-          }`}
-        >
-          <div className="flex items-start gap-3 p-4">
-            <div className={`shrink-0 mt-0.5 p-1.5 rounded-lg ${
-              toast.type === 'success' ? 'bg-emerald-500/20' : 'bg-red-500/20'
-            }`}>
-              {toast.type === 'success'
-                ? <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                : <AlertTriangle className="w-4 h-4 text-red-400" />
-              }
-            </div>
-            <p className="text-sm font-medium leading-relaxed">{toast.msg}</p>
-          </div>
-        </div>
-      )}
+
+      {/* Removed custom toast — now using global ToastProvider */}
 
       {/* Header y Selector de Día */}
       <header className="space-y-6">
@@ -245,23 +244,23 @@ export default function ReservasPage() {
           <h1 className="text-2xl font-bold text-white tracking-tight">Reserva tu Clase</h1>
         </div>
 
-        {isBlocked && (userStatus as string) !== 'SIN_SESIONES' && (
-          <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-5 flex items-start gap-4 backdrop-blur-sm">
-            <AlertTriangle className="w-6 h-6 text-red-500 shrink-0 mt-0.5" />
-            <div>
-              <h3 className="text-red-500 font-bold text-lg mb-1">Membresía {userStatus.toLowerCase()}</h3>
-              <p className="text-red-400/80 text-sm font-medium">Por favor procesa tu pago para habilitar la reserva de clases. Dirígete a recepción o paga en línea.</p>
+        {!isLoading && !puedeAgendar && (
+          <div className="bg-zinc-900/80 border border-white/10 rounded-3xl p-5 flex flex-col items-start gap-5 backdrop-blur-md shadow-xl">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-full bg-yellow-500/10 flex items-center justify-center shrink-0 border border-yellow-500/20">
+                <Lock className="w-5 h-5 text-yellow-400 animate-pulse" />
+              </div>
+              <div className="flex flex-col text-left">
+                <h3 className="text-white font-bold text-lg mb-1 tracking-tight">Reactiva tu plan para agendar</h3>
+                <p className="text-zinc-400 text-sm font-medium">No te quedes por fuera. Renueva tu suscripción para asegurar tu cupo.</p>
+              </div>
             </div>
-          </div>
-        )}
-
-        {userStatus === 'SIN_SESIONES' && (
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-5 flex items-start gap-4 backdrop-blur-sm">
-            <AlertTriangle className="w-6 h-6 text-amber-500 shrink-0 mt-0.5" />
-            <div>
-              <h3 className="text-amber-500 font-bold text-lg mb-1">Has agotado tus sesiones</h3>
-              <p className="text-amber-400/80 text-sm font-medium">Renueva tu plan para agendar más clases.</p>
-            </div>
+            <Link 
+              href="/dashboard/suscripcion/nueva"
+              className="w-full px-6 py-3.5 bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(2,215,229,0.15)]"
+            >
+              {['PRUEBA_ASISTIDA', 'PRUEBA_RESERVADA'].includes(etiquetaLead || '') ? 'Inscríbete ahora para agendar' : 'Renovar Plan'} <ArrowRight className="w-5 h-5" />
+            </Link>
           </div>
         )}
 
@@ -407,14 +406,19 @@ export default function ReservasPage() {
 
                       {/* Botón de Acción */}
                       <div className="mt-5 relative z-10 pl-2">
-                        {userAlreadyBooked ? (
+                         {userAlreadyBooked ? (
                            <button 
                              disabled
                              className="w-full py-3.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-brand-primary/20 text-brand-primary border border-brand-primary/50 cursor-default"
                            >
                              <CheckCircle2 className="w-4 h-4" />
-                             Reservada
+                             Clase Reservada
                            </button>
+                         ) : !puedeAgendar ? (
+                           <div className="w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 bg-zinc-900/80 text-zinc-600 border border-zinc-800 cursor-not-allowed select-none">
+                             <Lock className="w-4 h-4" />
+                             Sin Sesiones
+                           </div>
                          ) : isFull ? (
                            <div className="w-full py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 bg-zinc-900/80 text-zinc-600 border border-zinc-800 cursor-not-allowed select-none">
                              <Users className="w-4 h-4" />
@@ -423,23 +427,14 @@ export default function ReservasPage() {
                          ) : (
                            <button 
                              onClick={() => handleReservar(clase.id)}
-                             disabled={isBlocked || userStatus === 'SIN_SESIONES' || actionLoading === clase.id}
-                             className={`w-full py-3.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2
-                               ${isBlocked || userStatus === 'SIN_SESIONES'
-                                 ? 'bg-zinc-900 text-zinc-700 cursor-not-allowed'
-                                 : 'bg-white text-zinc-950 hover:bg-zinc-200 shadow-[0_0_20px_rgba(255,255,255,0.1)] active:scale-[0.98]'
-                               }
-                             `}
+                             disabled={actionLoading === clase.id}
+                             className="w-full py-3.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-white text-zinc-950 hover:bg-zinc-200 shadow-[0_0_20px_rgba(255,255,255,0.1)] active:scale-[0.98]"
                            >
                              {actionLoading === clase.id ? (
                                <>
                                  <Loader2 className="w-4 h-4 animate-spin" />
                                  Procesando...
                                </>
-                             ) : userStatus === 'SIN_SESIONES' ? (
-                               'Sin Sesiones'
-                             ) : isBlocked ? (
-                               'Bloqueado'
                              ) : (
                                <>
                                  Reservar Clase

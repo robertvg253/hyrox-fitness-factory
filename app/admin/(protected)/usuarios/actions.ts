@@ -3,6 +3,7 @@
 import { createClient } from '@/src/utils/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
+import { generarIdentidadFantasma } from '@/src/utils/authHelpers'
 
 export async function verificarDisponibilidad(cedula?: string, telefono?: string) {
   const supabase = await createClient();
@@ -55,14 +56,12 @@ export async function crearAtleta(formData: FormData) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  const telefonoLimpio = telefono.trim().replace(/\+/g, '');
-  const emailFicticio = `${telefonoLimpio}@fitnessfactory.local`;
-  const password = Math.random().toString(36).slice(-10) + 'A1!';
+  const { emailFicticio, claveFicticia } = generarIdentidadFantasma(cedula);
 
   // Crear en Auth primero
   const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
     email: emailFicticio,
-    password: password,
+    password: claveFicticia,
     email_confirm: true,
     user_metadata: {
       name: nombre_completo,
@@ -86,7 +85,8 @@ export async function crearAtleta(formData: FormData) {
       telefono: telefono.trim(),
       rol: 'ATLETA',
       sede_id: activeSedeId,
-      email: emailFicticio
+      email: emailFicticio,
+      acepto_terminos: false
     })
     .select()
     .single();
@@ -161,4 +161,46 @@ export async function asignarPlan(usuarioId: string, planId: string, sedeId: str
   }
 
   return { success: true, data };
+}
+
+export async function actualizarFechaCorteManual(suscripcionId: string, nuevaFecha: string) {
+  const supabaseAuth = await createClient();
+  const { data: { user } } = await supabaseAuth.auth.getUser();
+  
+  if (!user) throw new Error("No autenticado");
+
+  const supabaseAdmin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+
+  // Verificar rol
+  const { data: adminUser } = await supabaseAdmin
+    .from('usuarios')
+    .select('rol')
+    .eq('id', user.id)
+    .single();
+
+  if (!adminUser || !['SUPERADMIN', 'ADMIN', 'GERENTE', 'ENCARGADO'].includes(adminUser.rol)) {
+    throw new Error("Acceso denegado: No tienes permisos de gerente para modificar fechas de corte.");
+  }
+
+  // Ajuste de Zona Horaria (Caracas UTC-4)
+  const fechaAjustada = `${nuevaFecha}T00:00:00-04:00`;
+
+  // Update
+  const { error } = await supabaseAdmin
+    .from('suscripciones')
+    .update({ fecha_corte: new Date(fechaAjustada).toISOString() })
+    .eq('id', suscripcionId);
+
+  if (error) {
+    throw new Error("Error al actualizar la fecha de corte: " + error.message);
+  }
+
+  // Opcionalmente podemos revalidar
+  const { revalidatePath } = require('next/cache');
+  revalidatePath('/admin/usuarios/[id]', 'page');
+
+  return { success: true };
 }

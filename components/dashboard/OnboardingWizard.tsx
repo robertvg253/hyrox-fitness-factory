@@ -17,6 +17,7 @@ export default function OnboardingWizard({ cedula }: { cedula: string }) {
   // Form Data
   const [objetivo, setObjetivo] = useState('')
   const [fechaNacimiento, setFechaNacimiento] = useState('')
+  const [genero, setGenero] = useState('')
   const [aceptoTerminos, setAceptoTerminos] = useState(false)
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -31,6 +32,7 @@ export default function OnboardingWizard({ cedula }: { cedula: string }) {
 
   const handleStep2 = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!genero) return toast.error('Selecciona tu género')
     if (!fechaNacimiento) return toast.error('Ingresa tu fecha de nacimiento')
     if (!aceptoTerminos) return toast.error('Debes aceptar los términos y condiciones')
     setStep(3)
@@ -50,7 +52,7 @@ export default function OnboardingWizard({ cedula }: { cedula: string }) {
     setLoading(true)
     setErrorVisual('')
     try {
-      const res = await activarPasePrueba({ fechaNacimiento, password })
+      const res = await activarPasePrueba({ fechaNacimiento, genero, password })
       if (res.success) {
         toast.success('¡Pase de prueba activado con éxito!')
         router.push('/dashboard')
@@ -145,6 +147,21 @@ export default function OnboardingWizard({ cedula }: { cedula: string }) {
                     onChange={(e) => setFechaNacimiento(e.target.value)}
                     className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all"
                   />
+                </div>
+
+                <div className="space-y-3">
+                  <label className="block text-sm font-bold text-zinc-300">Género</label>
+                  <select
+                    required
+                    value={genero}
+                    onChange={(e) => setGenero(e.target.value)}
+                    className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all cursor-pointer"
+                  >
+                    <option value="" disabled className="text-zinc-500">Selecciona tu género</option>
+                    <option value="masculino">Masculino</option>
+                    <option value="femenino">Femenino</option>
+                    <option value="prefiero no decirlo">Prefiero no decirlo</option>
+                  </select>
                 </div>
 
                 <div className="flex items-start gap-3 mt-4 bg-zinc-900 p-4 rounded-xl border border-zinc-800">
@@ -281,7 +298,7 @@ export default function OnboardingWizard({ cedula }: { cedula: string }) {
                 {loading ? (
                   <><Loader2 className="w-6 h-6 animate-spin" /> Activando Pase...</>
                 ) : (
-                  'Obtener mi Pase de Prueba (24h)'
+                  'Entrar al panel'
                 )}
               </button>
               

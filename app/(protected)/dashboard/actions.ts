@@ -4,7 +4,7 @@ import { createClient } from '@/src/utils/supabase/server'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { revalidatePath } from 'next/cache'
 
-export async function activarPasePrueba({ fechaNacimiento, password }: { fechaNacimiento: string, password?: string }) {
+export async function activarPasePrueba({ fechaNacimiento, genero, password }: { fechaNacimiento: string, genero: string, password?: string }) {
   const supabase = await createClient()
 
   const supabaseAdmin = createSupabaseClient(
@@ -22,8 +22,9 @@ export async function activarPasePrueba({ fechaNacimiento, password }: { fechaNa
       .from('usuarios')
       .update({
         fecha_nacimiento: fechaNacimiento,
+        genero: genero,
         acepto_terminos: true,
-        etiqueta_lead: null
+        etiqueta_lead: 'PRUEBA_PENDIENTE'
       })
       .eq('id', user.id)
 
@@ -128,6 +129,10 @@ export async function reservarClase(claseId: string, usuarioId: string) {
        const planesObj = Array.isArray(subActiva.planes) ? subActiva.planes[0] : subActiva.planes;
        isPlanIlimitado = (planesObj as any)?.tipo === 'TIEMPO'
        
+       if (subActiva.estado !== 'ACTIVO') {
+         throw new Error('Tu plan está inactivo. Renueva tu plan para seguir entrenando.')
+       }
+
        if (!isPlanIlimitado && currentSesiones <= 0) {
          throw new Error('Has agotado tus sesiones. Renueva tu plan para seguir entrenando.')
        }
@@ -169,8 +174,74 @@ export async function reservarClase(claseId: string, usuarioId: string) {
        }
     }
 
+    // Backend Trigger A (Al Agendar):
+    const { data: usuarioData } = await supabase
+      .from('usuarios')
+      .select('etiqueta_lead')
+      .eq('id', usuarioId)
+      .single()
+
+    if (usuarioData?.etiqueta_lead === 'PRUEBA_PENDIENTE') {
+      const supabaseAdmin = createSupabaseClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      )
+      await supabaseAdmin
+        .from('usuarios')
+        .update({ etiqueta_lead: 'PRUEBA_RESERVADA' })
+        .eq('id', usuarioId)
+    }
+
     revalidatePath('/dashboard', 'layout')
     return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
+export async function obtenerClasesSede(sedeId: string, dateStart: string, dateEnd: string) {
+  try {
+    const supabaseAdmin = createSupabaseClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+    
+    const { data, error } = await supabaseAdmin
+      .from('clases_programadas')
+      .select('*, disciplinas(nombre, color_hex), instructores(nombre), reservas(id, usuario_id, estado_reserva)')
+      .gte('fecha_hora_inicio', dateStart)
+      .lte('fecha_hora_inicio', dateEnd)
+      .eq('sede_id', sedeId)
+      .order('fecha_hora_inicio', { ascending: true })
+
+    if (error) throw error
+    return { success: true, data }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
+export async function obtenerPlanesSede(sedeId: string) {
+  try {
+    const supabaseAdmin = createSupabaseClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+
+    const { data: planes, error } = await supabaseAdmin
+      .from('planes')
+      .select('*')
+      .gt('precio_usd', 0)
+      .eq('estado', 'ACTIVO')
+      .order('precio_usd', { ascending: true })
+
+    if (error) throw error
+
+    const planesDisponibles = planes.filter((plan: any) => {
+      return plan.sedes && Array.isArray(plan.sedes) && plan.sedes.includes(sedeId)
+    })
+
+    return { success: true, data: planesDisponibles }
   } catch (err: any) {
     return { success: false, error: err.message }
   }

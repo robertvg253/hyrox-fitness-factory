@@ -1,7 +1,7 @@
 import { createClient } from '@/src/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { Bell, CalendarPlus, Dumbbell, CreditCard, TrendingUp, ArrowRight } from 'lucide-react'
+import { Bell, CalendarPlus, Dumbbell, CreditCard, TrendingUp, ArrowRight, User } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -18,14 +18,14 @@ export default async function DashboardPage() {
   // Query 1: Datos básicos del usuario — query separado para evitar fallos por joins
   const { data: userData } = await supabase
     .from('usuarios')
-    .select('nombre_completo, rol, etiqueta_lead, cedula_rif')
+    .select('nombre_completo, rol, etiqueta_lead, cedula_rif, acepto_terminos, fecha_nacimiento, sede_id')
     .eq('id', user.id)
     .single()
 
   // Query 2: Suscripción activa más reciente
   const { data: suscripcionData } = await supabase
     .from('suscripciones')
-    .select('id, estado, fecha_corte, sesiones_restantes, planes(tipo)')
+    .select('id, estado, fecha_corte, sesiones_restantes, planes(tipo, nombre)')
     .eq('usuario_id', user.id)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -74,7 +74,7 @@ export default async function DashboardPage() {
   let estaVencido = false
   if (!estado || estado === 'VENCIDO') {
     estaVencido = true
-  } else if (estado === 'ACTIVO') {
+  } else if (estado === 'ACTIVO' || estado === 'CLASE DE PRUEBA') {
     if (!fechaVencimientoBD || new Date(fechaVencimientoBD) < new Date()) {
       estaVencido = true
     }
@@ -87,11 +87,21 @@ export default async function DashboardPage() {
   const sinSesiones = !isIlimitado && sesionesDisponibles <= 0
   const userBookedProximaClase = !!proximaReserva
 
-  // Flujo Onboarding pendiente — solo para usuarios recién registrados con etiqueta PRUEBA_PENDIENTE
-  // Una vez completado, etiqueta_lead = null y ya no entra aquí
-  if (userData?.etiqueta_lead === 'PRUEBA_PENDIENTE') {
+  const esClasePrueba = planesObj?.nombre === 'Clase de Prueba'
+  const tienePlanPago = (estado === 'ACTIVO' || estado === 'CLASE DE PRUEBA') && !esClasePrueba;
+  
+  // FIXED SECURITY LOGIC:
+  const puedeAgendar = Boolean(
+    suscripcionActiva && 
+    (estado === 'ACTIVO' || estado === 'CLASE DE PRUEBA') && 
+    (isIlimitado || (suscripcionActiva.sesiones_restantes !== null && suscripcionActiva.sesiones_restantes > 0)) &&
+    !estaVencido
+  );
+
+  // Flujo Onboarding pendiente — validación de datos maestros, no de métricas de lead
+  if (!userData?.acepto_terminos || !userData?.fecha_nacimiento || !userData?.sede_id) {
     const OnboardingWizard = (await import('@/components/dashboard/OnboardingWizard')).default
-    return <OnboardingWizard cedula={userData.cedula_rif || ''} />
+    return <OnboardingWizard cedula={userData?.cedula_rif || ''} />
   }
 
   // Nombre: query separado garantiza que nunca mostremos la cédula
@@ -106,29 +116,170 @@ export default async function DashboardPage() {
   })()
 
   return (
-    <main className="p-6 space-y-8">
-      {/* Header */}
-      <header className="flex justify-between items-center">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-full overflow-hidden bg-zinc-800 border-2 border-zinc-700">
-            <img
-              src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=150&auto=format&fit=crop"
-              alt="Avatar"
-              className="object-cover w-full h-full"
-            />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-zinc-400">Buenos días,</p>
-            <h1 className="text-2xl font-bold text-white tracking-tight capitalize">{firstName}</h1>
-          </div>
+    <main className="pb-6 space-y-8">
+      {/* Hero Section con Header Inmersivo */}
+      <section className="relative h-[320px] overflow-hidden flex flex-col justify-between p-6 animate-in fade-in slide-in-from-top-4 duration-700">
+        <div className="absolute inset-0 z-0">
+          <img 
+            src="https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=1470&auto=format&fit=crop" 
+            alt="Entrenamiento"
+            className="w-full h-full object-cover object-center"
+          />
+          {/* Gradientes oscuros para contraste (Arriba para Header, Abajo para Textos) */}
+          <div className="absolute inset-0 bg-gradient-to-b from-black/90 via-black/40 to-transparent z-10" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-transparent z-10" />
         </div>
-        <button className="w-10 h-10 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-white hover:bg-zinc-800 transition-colors">
-          <Bell className="w-5 h-5" />
-        </button>
-      </header>
+        
+        {/* Header (Superpuesto) */}
+        <header className="relative z-20 flex items-center justify-start w-full">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full overflow-hidden bg-zinc-900 border border-zinc-700 flex items-center justify-center shrink-0">
+              <User className="w-5 h-5 text-zinc-400" />
+            </div>
+            <div className="flex flex-col">
+              <p className="text-[10px] font-bold text-zinc-300 shadow-black drop-shadow-md uppercase tracking-wider">Bienvenido,</p>
+              <h1 className="text-lg font-bold text-white tracking-tight capitalize shadow-black drop-shadow-md">{firstName}</h1>
+            </div>
+          </div>
+        </header>
+        
+        {/* Banner Content */}
+        <div className="relative z-20 flex flex-col items-start w-full max-w-sm mt-auto">
+          {(() => {
+            const estadoNormalizado = (suscripcionActiva?.estado || 'INACTIVO').toUpperCase();
+            const sesionesRestantes = suscripcionActiva?.sesiones_restantes ?? 0;
+            const tieneSesionesDisponibles = isIlimitado || (suscripcionActiva?.sesiones_restantes !== null && sesionesRestantes > 0);
+            const esPlanActivoOPrueba = estadoNormalizado === 'ACTIVO' || estadoNormalizado === 'CLASE DE PRUEBA';
+
+            // 1. Condición para Banner de Renovación:
+            // Se muestra si el estado es 'INACTIVO' (o vencido) O si sesiones_restantes <= 0 (incluso en 'ACTIVO' o 'CLASE DE PRUEBA')
+            const debeMostrarRenovacion = !suscripcionActiva || 
+                                          estadoNormalizado === 'INACTIVO' || 
+                                          estadoNormalizado === 'VENCIDO' || 
+                                          estaVencido || 
+                                          (!isIlimitado && sesionesRestantes <= 0);
+
+            // Si el usuario ya no tiene sesiones disponibles, forzar el banner de renovación
+            if (debeMostrarRenovacion && !userBookedProximaClase) {
+              return (
+                <>
+                  <h3 className="font-bold text-white text-3xl tracking-tight leading-tight mb-2">
+                    ¡Afíliate ahora!
+                  </h3>
+                  <p className="text-zinc-300 text-sm font-medium mb-5">
+                    Mantén tu ritmo. Renueva tu plan para seguir entrenando.
+                  </p>
+                  <Link 
+                    href="/dashboard/suscripcion/nueva"
+                    className="px-6 py-3 w-full bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)] flex items-center justify-center gap-2"
+                  >
+                    Renovar Plan <ArrowRight className="w-5 h-5" />
+                  </Link>
+                </>
+              );
+            }
+
+            if (userData?.etiqueta_lead === 'PRUEBA_PENDIENTE' && tieneSesionesDisponibles) {
+              return (
+                <>
+                  <h3 className="font-bold text-white text-3xl tracking-tight leading-tight mb-2">
+                    ¡Bienvenido a la comunidad!
+                  </h3>
+                  <p className="text-zinc-300 text-sm font-medium mb-5">
+                    Reserva tu clase de prueba y conoce nuestro sistema.
+                  </p>
+                  <Link 
+                    href="/dashboard/reservas"
+                    className="px-6 py-3 w-full bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)] flex items-center justify-center gap-2"
+                  >
+                    Agendar mi prueba <ArrowRight className="w-5 h-5" />
+                  </Link>
+                </>
+              );
+            }
+
+            if (userData?.etiqueta_lead === 'PRUEBA_RESERVADA') {
+              return (
+                <>
+                  <h3 className="font-bold text-white text-3xl tracking-tight leading-tight mb-2">
+                    ¡Estás a un paso!
+                  </h3>
+                  <p className="text-zinc-300 text-sm font-medium mb-5">
+                    Tu clase de prueba está agendada. Prepárate para darlo todo.
+                  </p>
+                  <Link 
+                    href="/dashboard/reservas"
+                    className="px-6 py-3 w-full bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)] flex items-center justify-center gap-2"
+                  >
+                    Ver mis reservas <ArrowRight className="w-5 h-5" />
+                  </Link>
+                </>
+              );
+            }
+
+            if (userData?.etiqueta_lead === 'PRUEBA_ASISTIDA' && !tienePlanPago) {
+              return (
+                <>
+                  <h3 className="font-bold text-white text-3xl tracking-tight leading-tight mb-2">
+                    ¿Qué tal tu primer entrenamiento?
+                  </h3>
+                  <p className="text-zinc-300 text-sm font-medium mb-5">
+                    No pierdas el ritmo. Adquiere tu plan y desata tu potencial.
+                  </p>
+                  <Link 
+                    href="/dashboard/suscripcion/nueva"
+                    className="px-6 py-3 w-full bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)] flex items-center justify-center gap-2"
+                  >
+                    Suscribirme ahora <ArrowRight className="w-5 h-5" />
+                  </Link>
+                </>
+              );
+            }
+
+            // 2. Condición estricta para "Listo para entrenar":
+            // SOLO debe mostrarse si el usuario tiene un plan activo/prueba AND sesiones_restantes > 0
+            if (esPlanActivoOPrueba && tieneSesionesDisponibles && !estaVencido) {
+              return (
+                <>
+                  <h3 className="font-bold text-white text-3xl tracking-tight leading-tight mb-2">
+                    ¡Listo para entrenar!
+                  </h3>
+                  <p className="text-zinc-300 text-sm font-medium mb-5">
+                    Asegura tu cupo en tu disciplina favorita.
+                  </p>
+                  <Link 
+                    href="/dashboard/reservas"
+                    className="px-6 py-3 w-full bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)] flex items-center justify-center gap-2"
+                  >
+                    Agendar Clase <ArrowRight className="w-5 h-5" />
+                  </Link>
+                </>
+              );
+            }
+
+            // Banner de Renovación por defecto si no cumple condiciones de agendar
+            return (
+              <>
+                <h3 className="font-bold text-white text-3xl tracking-tight leading-tight mb-2">
+                  ¡Afíliate ahora!
+                </h3>
+                <p className="text-zinc-300 text-sm font-medium mb-5">
+                  Mantén tu ritmo. Renueva tu plan para seguir entrenando.
+                </p>
+                <Link 
+                  href="/dashboard/suscripcion/nueva"
+                  className="px-6 py-3 w-full bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)] flex items-center justify-center gap-2"
+                >
+                  Renovar Plan <ArrowRight className="w-5 h-5" />
+                </Link>
+              </>
+            );
+          })()}
+        </div>
+      </section>
 
       {/* Hero Card */}
-      <section>
+      <section className="px-6">
         <div className="bg-gradient-to-br from-zinc-900 to-black border border-zinc-800 rounded-3xl p-6 relative overflow-hidden shadow-2xl">
           <div className="absolute top-0 left-0 w-1 h-full bg-brand-primary"></div>
           <div className="absolute -right-10 -top-10 opacity-5">
@@ -136,7 +287,7 @@ export default async function DashboardPage() {
           </div>
           <div className="relative z-10 flex flex-col items-start">
             <h2 className="text-xs font-bold tracking-widest text-zinc-400 uppercase mb-2">
-              {userBookedProximaClase ? 'TU CLASE AGENDADA' : sinSesiones ? 'SUSCRIPCIÓN INACTIVA' : 'RESERVA TU PRÓXIMA CLASE'}
+              TUS PRÓXIMAS RESERVAS
             </h2>
 
             {userBookedProximaClase ? (
@@ -154,30 +305,9 @@ export default async function DashboardPage() {
                   Ya Reservada
                 </button>
               </>
-            ) : sinSesiones ? (
-              <>
-                <p className="text-xl font-bold text-white mb-4 tracking-tight">No tienes reservas activas</p>
-                <div className="flex flex-col items-start gap-1">
-                  <button
-                    disabled
-                    className="px-5 py-2 bg-zinc-800 text-zinc-500 font-bold text-sm rounded-full cursor-not-allowed"
-                  >
-                    Sin Sesiones
-                  </button>
-                  <p className="text-[10px] text-red-400 font-medium">
-                    Has agotado tus sesiones. Renueva tu plan para agendar más clases.
-                  </p>
-                </div>
-              </>
             ) : (
               <>
-                <p className="text-xl font-bold text-white mb-4 tracking-tight">No tienes reservas activas</p>
-                <Link
-                  href="/dashboard/reservas"
-                  className="px-5 py-2 bg-brand-primary text-black font-bold text-sm rounded-full hover:opacity-90 transition-opacity"
-                >
-                  Agendar
-                </Link>
+                <p className="text-xl font-bold text-white tracking-tight text-zinc-300">No tienes clases agendadas</p>
               </>
             )}
           </div>
@@ -185,9 +315,9 @@ export default async function DashboardPage() {
       </section>
 
       {/* Quick Access */}
-      <section>
+      <section className="px-6">
         <div className="flex justify-between items-center px-2">
-          <Link href="/dashboard/reservas" className="flex flex-col items-center gap-2 group">
+          <Link href={!puedeAgendar ? "/dashboard/suscripcion/nueva" : "/dashboard/reservas"} className={`flex flex-col items-center gap-2 group ${!puedeAgendar ? 'opacity-50 grayscale' : ''}`}>
             <div className="w-14 h-14 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-white group-hover:border-brand-primary group-hover:text-brand-primary transition-all shadow-lg">
               <CalendarPlus className="w-6 h-6" />
             </div>
@@ -218,7 +348,7 @@ export default async function DashboardPage() {
       </section>
 
       {/* Disciplinas */}
-      <section>
+      <section className="px-6">
         <h3 className="text-lg font-bold text-white mb-4 tracking-tight">Explora nuestras disciplinas</h3>
 
         <div className="space-y-4">

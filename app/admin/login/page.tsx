@@ -1,6 +1,5 @@
 "use client"
 
-import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useForm } from 'react-hook-form'
@@ -8,6 +7,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Mail, Lock, Loader2 } from 'lucide-react'
 import { createClient } from '@/src/utils/supabase/client'
+import toast from 'react-hot-toast'
 
 const loginSchema = z.object({
   email: z.string().email('Ingresa un correo electrónico válido'),
@@ -19,7 +19,6 @@ type LoginFormValues = z.infer<typeof loginSchema>
 export default function AdminLoginPage() {
   const router = useRouter()
   const supabase = createClient()
-  const [authError, setAuthError] = useState<string | null>(null)
 
   const {
     register,
@@ -31,7 +30,6 @@ export default function AdminLoginPage() {
 
   const onSubmit = async (data: LoginFormValues) => {
     try {
-      setAuthError(null)
       const { error } = await supabase.auth.signInWithPassword({
         email: data.email,
         password: data.password,
@@ -43,7 +41,7 @@ export default function AdminLoginPage() {
 
       router.push('/admin/dashboard')
     } catch (error: any) {
-      setAuthError(error.message || 'Error al iniciar sesión. Verifica tus credenciales.')
+      toast.error('Credenciales inválidas')
     }
   }
 
@@ -105,12 +103,6 @@ export default function AdminLoginPage() {
               </Link>
             </div>
           </div>
-
-          {authError && (
-            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-              <p className="text-sm text-red-400 text-center">{authError}</p>
-            </div>
-          )}
 
           <button
             type="submit"

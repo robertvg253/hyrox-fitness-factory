@@ -337,7 +337,14 @@ export default function FinanzasPage() {
                         {metadata.referencia || '-'}
                       </td>
                       <td className="py-4 text-zinc-400 text-xs">
-                        {metadata.responsable_nombre || '-'}
+                        <div className="flex items-center gap-1.5">
+                          <span>{metadata.responsable_nombre || '-'}</span>
+                          {metadata.origin === 'self-service' && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-yellow-500/20 text-yellow-500 text-[9px] font-bold uppercase tracking-wider shadow-sm">
+                              Atleta
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-4 text-right">
                         <div className="flex justify-end gap-2">
@@ -562,9 +569,18 @@ export default function FinanzasPage() {
                       {orden.metadata?.provider === 'MANUAL' ? (
                         <div className="flex flex-col items-end gap-0.5">
                           <span className="text-xs font-bold text-[#02D7E5]">{orden.metadata.metodo_pago}</span>
-                          <span className="text-[10px] text-zinc-400">
-                            {orden.estado === 'RECHAZADO' ? orden.metadata.rechazado_por_nombre : (orden.metadata.conciliado_por_nombre || orden.metadata.responsable_nombre)}
-                          </span>
+                          <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                            <span className="text-[10px] text-zinc-400">
+                              {orden.estado === 'RECHAZADO' 
+                                ? orden.metadata.rechazado_por_nombre 
+                                : (orden.metadata.conciliado_por_nombre || orden.metadata.responsable_nombre)}
+                            </span>
+                            {orden.metadata.origin === 'self-service' && (
+                              <span className="px-1.5 py-0.5 rounded-md bg-yellow-500/20 text-yellow-500 text-[9px] font-bold uppercase tracking-wider shadow-sm">
+                                Atleta
+                              </span>
+                            )}
+                          </div>
                         </div>
                       ) : (
                         <span className="font-mono text-xs text-zinc-500">{orden.r4_transaction_id || 'R4 Auto'}</span>

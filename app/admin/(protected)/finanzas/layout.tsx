@@ -17,7 +17,7 @@ export default async function FinanzasLayout({ children }: { children: React.Rea
     .single();
 
   if (!hasFinanceAccess(userData?.rol)) {
-    redirect('/admin/usuarios');
+    redirect('/admin/dashboard');
   }
 
   return <>{children}</>;

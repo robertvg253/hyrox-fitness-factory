@@ -76,6 +76,14 @@ export async function POST(request: Request) {
         nota: 'Conciliación aprobada (el tiempo fue otorgado en la emisión)'
       });
 
+      // Backend Trigger B (Al Aprobar Pago / Convertir)
+      if (orden.usuario_id) {
+        await supabase
+          .from('usuarios')
+          .update({ etiqueta_lead: 'CONVERTIDO' })
+          .eq('id', orden.usuario_id);
+      }
+
       return NextResponse.json({ message: 'Orden conciliada y APROBADA exitosamente.' }, { status: 200 });
 
     } else if (accion === 'RECHAZAR') {
@@ -127,6 +135,10 @@ export async function POST(request: Request) {
         estado: nuevoEstado as EstadoSuscripcion,
         fecha_corte: fechaRevertida.toISOString()
       };
+      
+      if (metadataActual.plan_id_anterior) {
+        payloadRollback.plan_id = metadataActual.plan_id_anterior;
+      }
       
       if (isSesiones && sesionesRevertidas !== null) {
         payloadRollback.sesiones_restantes = sesionesRevertidas;

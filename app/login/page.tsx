@@ -1,17 +1,15 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Loader2, ArrowRight, ShieldCheck } from 'lucide-react'
-import { createClient } from '@/src/utils/supabase/client'
+import { Loader2, ArrowRight } from 'lucide-react'
 import { iniciarSesionUsuario } from '@/app/auth/actions'
 import toast from 'react-hot-toast'
 
 export default function LoginPage() {
   const router = useRouter()
-  const supabase = createClient()
   
   const [loading, setLoading] = useState(false)
   
@@ -19,11 +17,9 @@ export default function LoginPage() {
   const [tipoDocumento, setTipoDocumento] = useState('V')
   const [numeroDocumento, setNumeroDocumento] = useState('')
   const [password, setPassword] = useState('')
-  const [errorVisual, setErrorVisual] = useState('')
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setErrorVisual('')
 
     if (numeroDocumento.length < 7) return toast.error('Ingresa un número válido de al menos 7 dígitos')
     if (!password) return toast.error('Ingresa tu contraseña')
@@ -35,8 +31,7 @@ export default function LoginPage() {
       const res = await iniciarSesionUsuario(fullCedula, password)
       
       if (!res.success) {
-        toast.error(res.error || 'Cédula o contraseña incorrecta.')
-        setErrorVisual(res.error || 'Cédula o contraseña incorrecta.')
+        toast.error('Credenciales inválidas')
         return
       }
 
@@ -44,8 +39,7 @@ export default function LoginPage() {
       router.push('/dashboard')
 
     } catch (err: any) {
-      toast.error('Error de conexión.')
-      setErrorVisual('Error de conexión.')
+      toast.error('Credenciales inválidas')
     } finally {
       setLoading(false)
     }
@@ -122,10 +116,6 @@ export default function LoginPage() {
               placeholder="••••••••"
             />
           </div>
-
-          {errorVisual && (
-            <p className="text-red-400 text-sm font-medium text-center">{errorVisual}</p>
-          )}
 
           <button
             type="submit"

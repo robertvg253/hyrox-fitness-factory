@@ -12,12 +12,14 @@ import {
   Box,
   CalendarDays,
   MapPin,
-  TrendingUp
+  TrendingUp,
+  Settings
 } from 'lucide-react';
 import { createClient } from '@/src/utils/supabase/client';
 import { useState, useEffect } from 'react';
 import { useTenant } from './TenantProvider';
-import { hasFinanceAccess } from '@/src/utils/permissions';
+import { hasFinanceAccess, isSuperAdmin } from '@/src/utils/permissions';
+import toast from 'react-hot-toast';
 
 type SubItem = {
   name: string;
@@ -72,7 +74,13 @@ const menuGroups: MenuGroup[] = [
   }
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+  initialRole?: string;
+  initialName?: string;
+  initialEmail?: string;
+}
+
+export default function Sidebar({ initialRole, initialName, initialEmail }: SidebarProps = {}) {
   const router = useRouter();
   const pathname = usePathname();
   const supabase = createClient();
@@ -80,42 +88,47 @@ export default function Sidebar() {
   
   const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({});
   const [isSedeDropdownOpen, setIsSedeDropdownOpen] = useState(false);
-  const [role, setRole] = useState<string>('RECEPCION');
-  const [userName, setUserName] = useState<string>('Usuario');
-  const [userEmail, setUserEmail] = useState<string>('');
+  const [role, setRole] = useState<string>(initialRole || 'RECEPCION');
+  const [userName, setUserName] = useState<string>(initialName || 'Usuario');
+  const [userEmail, setUserEmail] = useState<string>(initialEmail || '');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user?.email) {
-        setUserName(session.user.user_metadata?.name || 'Administrador');
-        setUserEmail(session.user.email || '');
+        if (!initialName) setUserName(session.user.user_metadata?.name || 'Administrador');
+        if (!initialEmail) setUserEmail(session.user.email || '');
 
-        // Obtener el rol real directamente de la base de datos
-        supabase
-          .from('usuarios')
-          .select('rol')
-          .eq('email', session.user.email)
-          .single()
-          .then(({ data, error }) => {
-            if (!error && data?.rol) {
-              setRole(data.rol);
-            } else {
-              setRole(session.user.user_metadata?.role || 'RECEPCION');
-            }
-          });
+        if (!initialRole) {
+          // Obtener el rol real directamente de la base de datos
+          supabase
+            .from('usuarios')
+            .select('rol')
+            .eq('email', session.user.email)
+            .single()
+            .then(({ data, error }) => {
+              if (!error && data?.rol) {
+                setRole(data.rol);
+              } else {
+                setRole(session.user.user_metadata?.role || 'RECEPCION');
+              }
+            });
+        }
       }
     });
-  }, [supabase]);
+  }, [supabase, initialRole, initialName, initialEmail]);
+
+  const isHighManagement = hasFinanceAccess(role);
 
   const filteredMenuGroups = menuGroups.map(group => ({
     ...group,
     items: group.items.filter(item => {
-      if (item.name === 'Finanzas & Cobranza') {
-        return hasFinanceAccess(role);
+      // Ocultar Finanzas & Cobranza e Indicadores (KPIs) para RECEPCIONISTA / roles no gerenciales
+      if (item.name === 'Finanzas & Cobranza' || item.name === 'Indicadores (KPIs)') {
+        return isHighManagement;
       }
       return true;
     })
-  }));
+  })).filter(group => group.items.length > 0);
 
   const toggleMenu = (name: string) => {
     setOpenMenus(prev => ({
@@ -289,10 +302,25 @@ export default function Sidebar() {
           <p className="text-[11px] text-gray-500 truncate mt-0.5">{userEmail}</p>
         </div>
         
+        {/* Botón Tuerca: Gestión de Staff (SUPERADMIN) */}
+        {isSuperAdmin(role) && (
+          <Link
+            href="/admin/configuracion"
+            title="Configuración del Sistema / Gestión de Staff"
+            className={`p-2 rounded-xl transition-colors duration-300 ml-auto shrink-0 group ${
+              pathname === '/admin/configuracion' 
+                ? 'bg-[#02D7E5]/10 text-[#02D7E5]' 
+                : 'text-gray-400 hover:bg-white/10 hover:text-[#02D7E5]'
+            }`}
+          >
+            <Settings strokeWidth={1.5} className="w-5 h-5 transition-transform duration-300 group-hover:rotate-45" />
+          </Link>
+        )}
+
         <button
           onClick={handleLogout}
           title="Cerrar Sesión"
-          className="p-2 rounded-xl text-gray-500 hover:bg-red-500/10 hover:text-red-400 transition-colors duration-300 ml-auto shrink-0 group"
+          className={`p-2 rounded-xl text-gray-500 hover:bg-red-500/10 hover:text-red-400 transition-colors duration-300 shrink-0 group ${!isSuperAdmin(role) ? 'ml-auto' : ''}`}
         >
           <LogOut strokeWidth={1.5} className="w-5 h-5 transition-colors group-hover:text-red-400" />
         </button>

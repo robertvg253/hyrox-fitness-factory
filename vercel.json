@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/cron/centinela",
-      "schedule": "0 23 * * 1-5"
+      "schedule": "0 3 * * 2-6"
     },
     {
       "path": "/api/cron/barrido-sesiones",

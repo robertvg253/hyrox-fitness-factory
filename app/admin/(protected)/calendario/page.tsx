@@ -162,7 +162,7 @@ export default function CalendarioPage() {
       const [clasesRes, disciplinasRes, instructoresRes] = await Promise.all([
         supabase
           .from("clases_programadas")
-          .select("*, disciplinas(nombre), instructores(nombre), reservas(id, clase_id, usuario_id, estado_reserva, asistio_fisicamente, es_clase_prueba, created_at, usuarios(id, nombre_completo, email, telefono, suscripciones(id, estado, sesiones_restantes, planes(tipo))))")
+          .select("*, disciplinas(nombre), instructores(nombre), reservas(*, usuarios:usuarios!usuario_id(id, nombre_completo, email, telefono, cedula_rif, suscripciones(id, estado, sesiones_restantes, planes(tipo))), atleta:usuarios!usuario_id(id, nombre_completo, email, telefono, cedula_rif, suscripciones(id, estado, sesiones_restantes, planes(tipo))))")
           .eq("sede_id", activeSede.id)
           .order("fecha_hora_inicio", { ascending: true }),
         supabase
@@ -180,7 +180,41 @@ export default function CalendarioPage() {
       if (disciplinasRes.error) throw disciplinasRes.error;
       if (instructoresRes.error) throw instructoresRes.error;
 
-      setClases(clasesRes.data || []);
+      const freshClases = clasesRes.data || [];
+      setClases(freshClases);
+      setViewingClase(prev => {
+        if (!prev) return null;
+        const fresh = freshClases.find((c: any) => c.id === prev.id);
+        if (!fresh) return prev;
+
+        // Fusión no destructiva de reservas para mantener los datos optimistas del atleta
+        const prevReservas = (prev as any).reservas || [];
+        const mergedReservas = ((fresh as any).reservas || []).map((incoming: any) => {
+          const existing = prevReservas.find((p: any) => p.id === incoming.id || (incoming.usuario_id && p.usuario_id === incoming.usuario_id));
+          const rawIncomingUser = incoming.atleta || incoming.usuario || incoming.usuarios;
+          const incomingUser = Array.isArray(rawIncomingUser) ? rawIncomingUser[0] : rawIncomingUser;
+          const incomingName = incomingUser?.nombre_completo || incomingUser?.nombre || incoming?.nombre_completo;
+
+          if (!incomingName && existing) {
+            const rawExistingUser = existing.atleta || existing.usuario || existing.usuarios;
+            const existingUser = Array.isArray(rawExistingUser) ? rawExistingUser[0] : rawExistingUser;
+            const fallbackName = existing.nombre_completo || existingUser?.nombre_completo || existingUser?.nombre;
+            return {
+              ...incoming,
+              nombre_completo: fallbackName,
+              atleta: existingUser || incoming.atleta,
+              usuario: existingUser || incoming.usuario,
+              usuarios: existingUser || incoming.usuarios
+            };
+          }
+          return incoming;
+        });
+
+        return {
+          ...fresh,
+          reservas: mergedReservas
+        };
+      });
       setDisciplinas(disciplinasRes.data || []);
       setInstructores(instructoresRes.data || []);
     } catch (err: any) {
@@ -549,7 +583,7 @@ export default function CalendarioPage() {
                         .slice(0, 3)
                         .map((r: any) => (
                           <div key={r.id} className="text-[9px] text-gray-300 truncate">
-                            • {r.usuarios?.nombre_completo?.split(' ')[0] || 'Atleta'}
+                            • {((r.atleta?.nombre_completo || (Array.isArray(r.atleta) ? r.atleta[0]?.nombre_completo : null) || r.nombre_completo || 'Atleta') as string).split(' ')[0]}
                           </div>
                       ))}
                       {(clase as any).reservas.filter((r: any) => r.estado_reserva !== 'CANCELADA').length > 3 && (

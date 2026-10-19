@@ -31,3 +31,71 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
 }
+
+@keyframes dynamicToastEnter {
+  0% {
+    transform: translateY(-40px);
+    clip-path: inset(0% 48% 0% 48% round 9999px);
+    opacity: 0;
+  }
+  40% {
+    transform: translateY(10px);
+    clip-path: inset(0% 48% 0% 48% round 9999px);
+    opacity: 1;
+  }
+  60% {
+    transform: translateY(0px);
+    clip-path: inset(0% 48% 0% 48% round 9999px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0px);
+    clip-path: inset(0% 0% 0% 0% round 9999px);
+    opacity: 1;
+  }
+}
+
+@keyframes dynamicToastLeave {
+  0% {
+    transform: translateY(0px);
+    clip-path: inset(0% 0% 0% 0% round 9999px);
+    opacity: 1;
+  }
+  40% {
+    transform: translateY(0px);
+    clip-path: inset(0% 48% 0% 48% round 9999px);
+    opacity: 1;
+  }
+  60% {
+    transform: translateY(10px);
+    clip-path: inset(0% 48% 0% 48% round 9999px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-40px);
+    clip-path: inset(0% 48% 0% 48% round 9999px);
+    opacity: 0;
+  }
+}
+
+@keyframes slideInRightToast {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideOutRightToast {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}

@@ -253,6 +253,10 @@ export async function anularCobro(ordenId: string, motivo: string) {
       estado: nuevoEstado
     };
     
+    if (orden.metadata?.plan_id_anterior) {
+      updatePayload.plan_id = orden.metadata.plan_id_anterior;
+    }
+    
     if (isSesiones && sesionesRevertidas !== null) {
       updatePayload.sesiones_restantes = sesionesRevertidas;
     }

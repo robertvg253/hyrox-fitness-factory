@@ -46,7 +46,7 @@ export async function procesarRenovacion(
   // 2. Ejecución del Time-Stacking (Caso Éxito)
   const { data: suscripcion, error: subError } = await supabase
     .from('suscripciones')
-    .select('id, estado, fecha_corte, plan_id, planes (tipo, sesiones_total)')
+    .select('id, estado, fecha_corte, plan_id, usuario_id, planes (tipo, sesiones_total)')
     .eq('id', suscripcion_id)
     .single();
 
@@ -94,6 +94,12 @@ export async function procesarRenovacion(
 
   console.log(`[Subscription Engine] Suscripción ${suscripcion.id} renovada hasta ${nuevaFechaCorte.toISOString()}.`);
   
+  // Backend Trigger B (Al Aprobar Pago / Convertir)
+  await supabase
+    .from('usuarios')
+    .update({ etiqueta_lead: 'CONVERTIDO' })
+    .eq('id', suscripcion.usuario_id);
+
   await registrarEvento('suscripciones', suscripcion.id, 'RENOVACION_ESTADO', {
     estado_anterior: suscripcion.estado,
     nuevo_estado: 'ACTIVO',

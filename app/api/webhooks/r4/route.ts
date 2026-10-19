@@ -85,30 +85,37 @@ export async function POST(request: Request) {
               }).eq('id', orden.suscripcion_id);
               console.log(`[Webhook R4] Suscripción ${orden.suscripcion_id} en ESTADO DE GRACIA (Pago Mixto).`);
             } else {
-              const { data: sub } = await supabase.from('suscripciones').select('estado').eq('id', orden.suscripcion_id).single()
+              const isR4Puro = currentMetadata.provider === 'R4';
               
-              if (sub && sub.estado === 'INACTIVO') {
-                const fechaCorte = new Date()
-                fechaCorte.setUTCMonth(fechaCorte.getUTCMonth() + 1)
-                
-                await supabase.from('suscripciones').update({ 
-                  estado: 'ACTIVO',
-                  fecha_corte: fechaCorte.toISOString()
-                }).eq('id', orden.suscripcion_id)
-
-                console.log(`[Webhook R4] Suscripción ${orden.suscripcion_id} activada exitosamente tras cobro móvil.`)
+              if (isR4Puro) {
+                // El tiempo ya fue otorgado optimísticamente en la emisión del cobro manual
+                console.log(`[Webhook R4] Suscripción ${orden.suscripcion_id} confirmada (Tiempo ya otorgado en emisión).`);
               } else {
-                const montoUsd = Number(orden.monto);
-                const tasaR4 = Number(body.exchange_rate) || 1; 
-                const montoPagadoVes = Number(body.amount?.value || body.amount) || (montoUsd * tasaR4);
+                const { data: sub } = await supabase.from('suscripciones').select('estado').eq('id', orden.suscripcion_id).single()
+                
+                if (sub && sub.estado === 'INACTIVO') {
+                  const fechaCorte = new Date()
+                  fechaCorte.setUTCMonth(fechaCorte.getUTCMonth() + 1)
+                  
+                  await supabase.from('suscripciones').update({ 
+                    estado: 'ACTIVO',
+                    fecha_corte: fechaCorte.toISOString()
+                  }).eq('id', orden.suscripcion_id)
 
-                await procesarRenovacion(
-                  orden.id,
-                  orden.suscripcion_id,
-                  montoUsd,
-                  tasaR4,
-                  montoPagadoVes
-                );
+                  console.log(`[Webhook R4] Suscripción ${orden.suscripcion_id} activada exitosamente tras cobro móvil.`)
+                } else {
+                  const montoUsd = Number(orden.monto);
+                  const tasaR4 = Number(body.exchange_rate) || 1; 
+                  const montoPagadoVes = Number(body.amount?.value || body.amount) || (montoUsd * tasaR4);
+
+                  await procesarRenovacion(
+                    orden.id,
+                    orden.suscripcion_id,
+                    montoUsd,
+                    tasaR4,
+                    montoPagadoVes
+                  );
+                }
               }
             }
           }

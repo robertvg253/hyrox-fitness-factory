@@ -177,7 +177,8 @@ export default function UsuariosClient({ initialUsuarios, activeSedeId }: Usuari
                   return (
                     <tr 
                       key={usuario.id} 
-                      className="border-b border-zinc-800/50 transition-colors hover:bg-zinc-800/30"
+                      onClick={() => router.push(`/admin/usuarios/${usuario.id}`)}
+                      className="border-b border-zinc-800/50 transition-colors hover:bg-zinc-800/50 cursor-pointer"
                     >
                       <td className="p-4 align-middle font-medium text-white">
                         {usuario.nombre_completo || 'Sin nombre'}
@@ -221,14 +222,20 @@ export default function UsuariosClient({ initialUsuarios, activeSedeId }: Usuari
                       <td className="p-4 align-middle">
                         {(!subPrincipal || (usuario.etiqueta_lead === 'PRUEBA_PENDIENTE' || (subPrincipal.planes?.nombre || '').toLowerCase().includes('prueba') || (subPrincipal.planes?.nombre || '').toLowerCase().includes('cortes'))) ? (
                           <button
-                            onClick={() => handleOpenAsignarPlan(usuario.id, usuario.nombre_completo)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenAsignarPlan(usuario.id, usuario.nombre_completo);
+                            }}
                             className="px-3 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-semibold rounded-lg transition-colors border border-emerald-500/20 whitespace-nowrap"
                           >
                             Crear Suscripción
                           </button>
                         ) : (
                           <button
-                            onClick={() => handleOpenModal(subPrincipal.id, subPrincipal.planes?.precio_usd || 30)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenModal(subPrincipal.id, subPrincipal.planes?.precio_usd || 30);
+                            }}
                             className="px-3 py-1 bg-[#02D7E5]/10 hover:bg-[#02D7E5]/20 text-[#02D7E5] text-xs font-semibold rounded-lg transition-colors border border-[#02D7E5]/20 whitespace-nowrap"
                           >
                             Pago Manual

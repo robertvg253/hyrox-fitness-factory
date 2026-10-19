@@ -73,7 +73,9 @@ export default async function PerfilAtletaPage() {
             {perfil.nombre_completo || 'Atleta'}
           </h2>
           <p className="text-sm text-zinc-400 mt-1">
-            {perfil.email || 'Sin correo registrado'}
+            {perfil.email && !perfil.email.includes('@fitnessfactory.local')
+              ? perfil.email
+              : 'Sin correo electrónico registrado'}
           </p>
         </section>
 
