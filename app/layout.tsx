@@ -6,8 +6,8 @@ import { ToastProvider } from "@/components/providers/ToastProvider";
 const rubik = Rubik({ subsets: ['latin'], variable: '--font-rubik', display: 'swap' });
 
 export const metadata: Metadata = {
-  title: "Ecosistema Fitness Factory",
-  description: "Plataforma Administrativa",
+  title: "Hyrox Competition Tracker",
+  description: "Plataforma de Gestión de Competiciones Hyrox",
 };
 
 export default function RootLayout({

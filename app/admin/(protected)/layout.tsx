@@ -1,9 +1,10 @@
 import Sidebar from './components/Sidebar'
 import { TenantProvider } from './components/TenantProvider'
 import { createClient } from '@/src/utils/supabase/server'
-import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
-import { canAccessAdminPanel } from '@/src/utils/permissions'
+
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
 export default async function AdminLayout({
   children,
@@ -12,58 +13,52 @@ export default async function AdminLayout({
 }) {
   const supabase = await createClient()
 
-  // 1. Verificación de sesión y permisos RBAC en el servidor
-  const { data: { user } } = await supabase.auth.getUser()
+  // 1. Verificación de sesión con supabase.auth.getUser() para máxima seguridad
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
   if (!user) {
     redirect('/admin/login')
   }
 
-  const { data: usuario } = await supabase
+  // 2. Consulta directa del rol en public.usuarios (sin caché en Server Component)
+  const { data: usuario, error } = await supabase
     .from('usuarios')
-    .select('id, rol, nombre_completo, email')
+    .select('id, rol, nombres, email')
     .eq('id', user.id)
-    .single()
+    .maybeSingle()
 
-  const rol = (usuario?.rol || '').toUpperCase()
-
-  // Si es ATLETA o no tiene rol de staff, expulsarlo a su panel público
-  if (!canAccessAdminPanel(rol)) {
+  if (error || !usuario) {
+    console.error('[AdminLayout] Error consultando rol de usuario:', error)
     redirect('/dashboard')
   }
 
-  const cookieStore = await cookies()
-  const activeSedeId = cookieStore.get('active_sede')?.value
+  const rol = (usuario.rol || '').toLowerCase().trim()
 
-  // Fetch sedes en el servidor
-  const { data: sedes } = await supabase
-    .from('sedes')
-    .select('id, nombre')
-    .order('nombre', { ascending: true })
-
-  const sedesList = sedes || []
-  let initialActiveSede = null
-
-  if (activeSedeId && sedesList.length > 0) {
-    initialActiveSede = sedesList.find(s => s.id === activeSedeId) || null
+  // 3. Si el rol !== 'admin', redirige inmediatamente a /dashboard
+  if (rol !== 'admin') {
+    redirect('/dashboard')
   }
 
+  // 4. Si el rol === 'admin', permite el renderizado del children
   return (
-    <TenantProvider initialSedes={sedesList} initialActiveSede={initialActiveSede}>
-      <div className="flex h-screen w-full overflow-hidden font-sans relative text-white">
+    <TenantProvider initialSedes={[]} initialActiveSede={null}>
+      <div className="flex h-screen w-full overflow-hidden font-sans relative text-white bg-black">
         {/* Fondo Fotográfico Fijo */}
         <div 
-          className="fixed inset-0 z-0 bg-cover bg-center bg-no-repeat"
+          className="fixed inset-0 z-0 bg-cover bg-center bg-no-repeat opacity-30 pointer-events-none"
           style={{ backgroundImage: 'url("/images/admin-bg.png")' }}
         />
         
         {/* Capa de Contraste (Overlay) */}
-        <div className="fixed inset-0 z-0 bg-black/40" />
+        <div className="fixed inset-0 z-0 bg-black/75 pointer-events-none" />
 
         {/* Contenido Principal */}
         <div className="relative z-10 flex h-full w-full">
           <Sidebar 
             initialRole={rol}
-            initialName={usuario?.nombre_completo || 'Administrador'}
+            initialName={usuario?.nombres || 'Administrador'}
             initialEmail={usuario?.email || user.email || ''}
           />
           <main className="flex-1 overflow-y-auto relative bg-transparent">

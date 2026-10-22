@@ -36,9 +36,9 @@ export default function LoginPage() {
       }
 
       toast.success('¡Bienvenido!')
-      router.push('/dashboard')
-
-    } catch (err: any) {
+      router.push(res.redirectUrl || res.redirect || '/dashboard')
+      router.refresh()
+    } catch {
       toast.error('Credenciales inválidas')
     } finally {
       setLoading(false)
@@ -128,9 +128,12 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div className="flex flex-col items-center pt-6 border-t border-zinc-900">
+        <div className="flex flex-col items-center gap-2 pt-6 border-t border-zinc-900">
           <Link href="/registro" className="text-sm font-medium text-zinc-400 hover:text-white transition-colors flex items-center gap-1">
             ¿Eres nuevo? <span className="text-[#02D7E5]">Regístrate aquí</span>
+          </Link>
+          <Link href="/activacion" className="text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors flex items-center gap-1">
+            ¿Te preinscribieron o invitaron? <span className="text-amber-400 font-semibold">Activa tu cupo</span>
           </Link>
         </div>
       </div>

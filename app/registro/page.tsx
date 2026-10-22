@@ -1,998 +1,1010 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import Image from 'next/image'
 import Link from 'next/link'
-import { Loader2, ArrowRight, ShieldCheck, ArrowLeft, AlertCircle, Check } from 'lucide-react'
-import { createClient } from '@/src/utils/supabase/client'
-import { enviarOtp, validarOtp, obtenerSedesPublicas, completarRegistroUsuario, evaluarCedulaRegistro } from '@/app/auth/actions'
+import { motion, AnimatePresence } from 'framer-motion'
+import {
+  User,
+  Mail,
+  Phone,
+  Calendar,
+  Lock,
+  ArrowRight,
+  ArrowLeft,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  ShieldCheck,
+  Users,
+  Trophy,
+  Flame,
+  Sparkles,
+  Zap
+} from 'lucide-react'
 import toast from 'react-hot-toast'
+import { createClient } from '@/src/utils/supabase/client'
+import {
+  obtenerCategoriasSimulacionActiva,
+  evaluarDisponibilidadRegistro,
+  registrarAtletaAutonomo
+} from './actions'
+import { enviarOtp, validarOtp } from '@/app/auth/actions'
+import { Categoria, Simulacion } from '@/src/types'
 
-export default function RegistroPage() {
+export default function RegistroAutonomoWizard() {
   const router = useRouter()
   const supabase = createClient()
-  
-  // Steps: 1: Cédula, 2: Teléfono, 3: OTP, 4: Smart Onboarding Stepper
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1)
+
+  // Steps: 1 = Datos Personales, Credenciales & OTP; 2 = Categoría; 3 = Compañero (si Dupla)
+  const [step, setStep] = useState<1 | 2 | 3>(1)
   const [loading, setLoading] = useState(false)
+  const [globalError, setGlobalError] = useState<string | null>(null)
 
-  // Smart Onboarding State
-  const [onboardingState, setOnboardingState] = useState<'NUEVO' | 'ESCALONADO' | 'COMPLETO' | null>(null)
-  const [onboardingStep, setOnboardingStep] = useState<1 | 2 | 3 | 4>(1)
-  const [preUserData, setPreUserData] = useState<any>(null)
+  // Simulation & Categories State
+  const [simulacion, setSimulacion] = useState<Simulacion | null>(null)
+  const [categorias, setCategorias] = useState<Categoria[]>([])
+  const [loadingCategorias, setLoadingCategorias] = useState(true)
 
-  // Form Data - Identificación
-  const [tipoDocumento, setTipoDocumento] = useState('V')
-  const [numeroDocumento, setNumeroDocumento] = useState('')
-  const [cedula, setCedula] = useState('')
+  // Step 1: Datos Personales
+  const [tipoDoc, setTipoDoc] = useState('V')
+  const [numeroDoc, setNumeroDoc] = useState('')
+  const [nombres, setNombres] = useState('')
+  const [email, setEmail] = useState('')
   const [countryCode, setCountryCode] = useState('+58')
   const [phoneRaw, setPhoneRaw] = useState('')
-  const [phoneFormatted, setPhoneFormatted] = useState('')
-  const [telefono, setTelefono] = useState('')
-  const [telefonoUltimos4, setTelefonoUltimos4] = useState('')
-
-  // Datos para Registro Nuevo / Escalonado
-  const [nombre, setNombre] = useState('')
-  const [apellido, setApellido] = useState('')
-  const [sedeId, setSedeId] = useState('')
   const [fechaNacimiento, setFechaNacimiento] = useState('')
-  const [genero, setGenero] = useState<'M' | 'F' | 'OTRO' | ''>('')
+  const [tallaFranela, setTallaFranela] = useState<'S' | 'M' | 'L' | 'XL' | 'XXL' | ''>('')
+  
+  // Step 1: Credenciales
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
-  const [aceptoTerminos, setAceptoTerminos] = useState(false)
 
-  // Validación de requisitos de contraseña en tiempo real
-  const hasMinLength = password.length >= 8
-  const hasUppercase = /[A-Z]/.test(password)
-  const hasNumber = /[0-9]/.test(password)
-  const hasSpecialChar = /[^A-Za-z0-9]/.test(password)
-  const isPasswordValid = hasMinLength && hasUppercase && hasNumber && hasSpecialChar
-  
-  const [sedes, setSedes] = useState<any[]>([])
-  const [isLoadingSedes, setIsLoadingSedes] = useState(true)
-  const [errorSedes, setErrorSedes] = useState(false)
-
-  const [errorVisual, setErrorVisual] = useState('')
-
-  // OTP Data
-  const [otp, setOtp] = useState(['', '', '', '', '', ''])
+  // Step 1: OTP
+  const [otpSent, setOtpSent] = useState(false)
+  const [otpVerified, setOtpVerified] = useState(false)
+  const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', ''])
   const [timer, setTimer] = useState(60)
-  const inputRefs = useRef<(HTMLInputElement | null)[]>([])
+  const [isSendingOtp, setIsSendingOtp] = useState(false)
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false)
+  const otpInputRefs = useRef<(HTMLInputElement | null)[]>([])
 
+  // Step 2: Categoría
+  const [categoriaSeleccionada, setCategoriaSeleccionada] = useState<Categoria | null>(null)
+
+  // Step 3: Compañero (Sólo si es Dupla)
+  const [compEmail, setCompEmail] = useState('')
+  const [compNombre, setCompNombre] = useState('')
+  const [compCountryCode, setCompCountryCode] = useState('+58')
+  const [compPhoneRaw, setCompPhoneRaw] = useState('')
+  const [compGenero, setCompGenero] = useState<'masculino' | 'femenino' | ''>('')
+
+  // Cargar simulación activa y categorías al montar el componente
+  useEffect(() => {
+    async function loadData() {
+      setLoadingCategorias(true)
+      const res = await obtenerCategoriasSimulacionActiva()
+      if (res.success) {
+        setSimulacion(res.simulacion)
+        setCategorias(res.categorias)
+      } else {
+        setGlobalError(res.error || 'No se pudo cargar la información de la competición activa.')
+      }
+      setLoadingCategorias(false)
+    }
+    loadData()
+  }, [])
+
+  // Timer regresivo para OTP
   useEffect(() => {
     let interval: NodeJS.Timeout
-    if (step === 3 && timer > 0) {
+    if (otpSent && timer > 0) {
       interval = setInterval(() => setTimer(t => t - 1), 1000)
     }
     return () => clearInterval(interval)
-  }, [step, timer])
+  }, [otpSent, timer])
 
-  useEffect(() => {
-    const fetchSedes = async () => {
-      try {
-        setIsLoadingSedes(true)
-        setErrorSedes(false)
-        const res = await obtenerSedesPublicas()
-          
-        if (!res.success) throw new Error(res.error)
-        
-        if (res.data) {
-          setSedes(res.data)
-          if (res.data.length === 1) setSedeId(res.data[0].id)
-        }
-      } catch (err) {
-        console.error('Error fetching sedes:', err)
-        setErrorSedes(true)
-        toast.error('Error cargando sedes')
-      } finally {
-        setIsLoadingSedes(false)
-      }
+  // Validaciones de Contraseña
+  const hasMinLength = password.length >= 8
+  const hasUppercase = /[A-Z]/.test(password)
+  const hasNumber = /[0-9]/.test(password)
+  const hasSpecial = /[^A-Za-z0-9]/.test(password)
+  const passwordsMatch = password === confirmPassword && password.length > 0
+  const isPasswordReady = hasMinLength && hasUppercase && hasNumber && hasSpecial && passwordsMatch
+
+  // Handlers para OTP
+  const handleEnviarOtp = async () => {
+    if (phoneRaw.length < 7) {
+      return toast.error('Ingresa un número telefónico válido de al menos 7 dígitos')
     }
-    fetchSedes()
-  }, [])
 
-  // Handlers - Fase Inicial
-  const handleStep1 = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (numeroDocumento.length < 7) return toast.error('Ingresa un número válido de al menos 7 dígitos')
-    
-    const fullCedula = `${tipoDocumento}${numeroDocumento}`
-    setCedula(fullCedula)
+    const fullPhone = `${countryCode}${phoneRaw.replace(/\D/g, '')}`
+    setIsSendingOtp(true)
+    setGlobalError(null)
 
-    setLoading(true)
     try {
-      const res = await evaluarCedulaRegistro(fullCedula)
-      if (!res.success) {
-        toast.error(res.error || 'Error verificando la cédula.')
-        return
-      }
-
-      if (res.estado === 'COMPLETO') {
-        setOnboardingState('COMPLETO')
-        setPreUserData(res.usuario)
-        setStep(4)
-        return
-      }
-
-      if (res.estado === 'ESCALONADO') {
-        setOnboardingState('ESCALONADO')
-        setPreUserData(res.usuario)
-        setTelefono(res.telefono || '')
-        setTelefonoUltimos4(res.ultimosCuatroDigitos || '')
+      const res = await enviarOtp(fullPhone)
+      if (res.success) {
+        setOtpSent(true)
         setTimer(60)
-        setStep(3)
-        toast.success(res.message || 'Código de seguridad enviado a tu WhatsApp')
-        return
-      }
-
-      // Flujo 1: NUEVO (pasa al input de teléfono manual)
-      setOnboardingState('NUEVO')
-      setStep(2)
-    } catch {
-      toast.error('Error de conexión al verificar cédula.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value.replace(/\D/g, '').slice(0, 10)
-    setPhoneRaw(raw)
-    
-    let formatted = raw
-    if (raw.length > 3 && raw.length <= 6) {
-      formatted = `${raw.slice(0,3)} ${raw.slice(3)}`
-    } else if (raw.length > 6) {
-      formatted = `${raw.slice(0,3)} ${raw.slice(3,6)} ${raw.slice(6)}`
-    }
-    setPhoneFormatted(formatted)
-  }
-
-  const handleStep2Telefono = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (phoneRaw.length < 10) {
-       return toast.error('Ingresa un teléfono válido de 10 dígitos')
-    }
-
-    const fullPhone = `${countryCode}${phoneRaw}`
-    setTelefono(fullPhone)
-
-    setLoading(true)
-    try {
-      const otpRes = await enviarOtp(fullPhone)
-      if (otpRes.success) {
-        toast.success(otpRes.message as any || 'Código OTP enviado')
-        setStep(3)
-        setTimer(60)
+        setOtpDigits(['', '', '', '', '', ''])
+        toast.success('Código OTP enviado por WhatsApp.')
+        setTimeout(() => otpInputRefs.current[0]?.focus(), 100)
       } else {
-        toast.error(otpRes.error || 'Error al enviar el código.')
+        toast.error(res.error || 'No se pudo despachar el código OTP.')
       }
     } catch {
-      toast.error('Error de conexión.')
+      toast.error('Error enviando código de verificación.')
     } finally {
-      setLoading(false)
+      setIsSendingOtp(false)
     }
   }
 
-  // OTP Handlers
-  const handleOtpChange = (index: number, value: string) => {
-    if (!/^\d*$/.test(value)) return
-    
-    const newOtp = [...otp]
-    newOtp[index] = value
-    setOtp(newOtp)
+  const handleOtpChange = (index: number, val: string) => {
+    const digit = val.slice(-1)
+    const newOtp = [...otpDigits]
+    newOtp[index] = digit
+    setOtpDigits(newOtp)
 
-    if (value && index < 5) {
-      inputRefs.current[index + 1]?.focus()
+    if (digit && index < 5) {
+      otpInputRefs.current[index + 1]?.focus()
+    }
+
+    if (digit && index === 5 && newOtp.every(d => d !== '')) {
+      handleVerificarOtp(newOtp.join(''))
     }
   }
 
-  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace' && !otp[index] && index > 0) {
-      inputRefs.current[index - 1]?.focus()
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
+      otpInputRefs.current[index - 1]?.focus()
     }
   }
 
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setErrorVisual('')
-    const codigo = otp.join('')
-    if (codigo.length < 6) return toast.error('Ingresa el código completo')
+  const handleVerificarOtp = async (codigoCompleto?: string) => {
+    const code = codigoCompleto || otpDigits.join('')
+    if (code.length !== 6) {
+      return toast.error('Ingresa el código de 6 dígitos')
+    }
 
-    setLoading(true)
+    const fullPhone = `${countryCode}${phoneRaw.replace(/\D/g, '')}`
+    setIsVerifyingOtp(true)
+
     try {
-      const res = await validarOtp(telefono, codigo, { isRegister: true, cedula })
-      
-      if (res.success && res.estado) {
-        setOnboardingState(res.estado)
-        if (res.usuario) {
-          setPreUserData(res.usuario)
-        }
-        // Salto inteligente: ESCALONADO va directo al paso 4
-        if (res.estado === 'ESCALONADO') {
-          setOnboardingStep(4)
-        } else if (res.estado === 'NUEVO') {
-          setOnboardingStep(1)
-        }
-        setStep(4)
+      const res = await validarOtp(fullPhone, code)
+      if (res.success) {
+        setOtpVerified(true)
+        toast.success('¡Teléfono verificado por WhatsApp!')
       } else {
-        toast.error(res.error || 'Código incorrecto.')
-        setErrorVisual(res.error || 'Código incorrecto.')
+        toast.error(res.error || 'Código OTP incorrecto o expirado.')
       }
     } catch {
-      toast.error('Error de conexión.')
-      setErrorVisual('Error de conexión.')
+      toast.error('Error validando el código OTP.')
     } finally {
-      setLoading(false)
+      setIsVerifyingOtp(false)
     }
   }
 
-  const handleResendOtp = async () => {
-    setLoading(true)
-    await enviarOtp(telefono)
-    setTimer(60)
-    setLoading(false)
-    toast.success('Código reenviado')
-  }
-
-  // Handlers - Stepper Onboarding (NUEVO)
-  const handleNextStep1 = (e: React.FormEvent) => {
+  // Handlers para Navegación de Steps
+  const handleAvanzarPaso1 = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!nombre.trim() || !apellido.trim()) {
-      return toast.error('Completa tu nombre y apellido')
+    setGlobalError(null)
+
+    if (numeroDoc.length < 6) {
+      return toast.error('Ingresa un número de cédula válido')
     }
-    setOnboardingStep(2)
-  }
-
-  const handleNextStep2 = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!sedeId) {
-      return toast.error('Selecciona tu sede principal')
+    if (!nombres.trim()) {
+      return toast.error('Ingresa tus nombres completos')
     }
-    setOnboardingStep(3)
-  }
-
-  const handleNextStep3 = (e: React.FormEvent) => {
-    e.preventDefault()
+    if (!email.trim() || !email.includes('@')) {
+      return toast.error('Ingresa un correo electrónico válido')
+    }
     if (!fechaNacimiento) {
       return toast.error('Ingresa tu fecha de nacimiento')
     }
-    if (!genero) {
-      return toast.error('Selecciona tu género')
+    if (!tallaFranela) {
+      return toast.error('Selecciona tu talla de franela')
     }
-    setOnboardingStep(4)
-  }
-
-  // Submit Final (Paso 4)
-  const handleFinalSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setErrorVisual('')
-
-    if (!isPasswordValid) {
-      return toast.error('La contraseña debe cumplir con todos los requisitos de seguridad')
+    if (!isPasswordReady) {
+      return toast.error('La contraseña no cumple con los requisitos de seguridad')
     }
-    if (password !== confirmPassword) {
-      return toast.error('Las contraseñas no coinciden')
-    }
-    if (!aceptoTerminos) {
-      return toast.error('Debes aceptar los Términos y Condiciones')
+    if (!otpVerified) {
+      return toast.error('Debes validar tu teléfono mediante el código OTP de WhatsApp')
     }
 
-    if (onboardingState === 'NUEVO') {
-      if (!nombre.trim() || !apellido.trim()) {
-        setOnboardingStep(1)
-        return toast.error('Completa tu nombre y apellido')
-      }
-      if (!sedeId) {
-        setOnboardingStep(2)
-        return toast.error('Selecciona tu sede principal')
-      }
-      if (!fechaNacimiento || !genero) {
-        setOnboardingStep(3)
-        return toast.error('Completa tu fecha de nacimiento y género')
-      }
-    }
-
-    if (onboardingState !== 'NUEVO' && onboardingState !== 'ESCALONADO') {
-      return
-    }
-
+    // Verificar disponibilidad en backend (cédula y email libres + cupo disponible)
     setLoading(true)
+    const fullCedula = `${tipoDoc}${numeroDoc.trim()}`
     try {
-      const res = await completarRegistroUsuario({
-        estado: onboardingState,
-        cedula,
-        telefono,
-        password,
-        nombre: nombre.trim(),
-        apellido: apellido.trim(),
-        sedeId,
-        usuarioId: preUserData?.id,
-        fechaNacimiento: fechaNacimiento || undefined,
-        genero: genero || undefined
+      const check = await evaluarDisponibilidadRegistro({
+        cedula: fullCedula,
+        email: email.trim()
       })
 
-      if (res.success && res.email && res.password) {
-        const { error: loginErr } = await supabase.auth.signInWithPassword({
-          email: res.email,
-          password: res.password
-        })
-
-        if (loginErr) {
-          toast.success('Cuenta activada con éxito. Por favor inicia sesión.')
-          router.push('/login')
-          return
-        }
-
-        toast.success('¡Registro exitoso! Bienvenido.')
-        router.push('/dashboard')
-      } else {
-        toast.error(res.error || 'Error al completar el registro.')
-        setErrorVisual(res.error || 'Error al completar el registro.')
+      if (!check.success) {
+        setGlobalError(check.error || 'No se puede continuar con el registro.')
+        toast.error(check.error || 'Error de disponibilidad.')
+        setLoading(false)
+        return
       }
+
+      setStep(2)
     } catch {
-      toast.error('Error inesperado durante el registro.')
-      setErrorVisual('Error inesperado durante el registro.')
+      setGlobalError('Error de conexión verificando disponibilidad.')
     } finally {
       setLoading(false)
     }
   }
 
-  // Determinación de visibilidad y acción del botón Volver
-  const canGoBack = (step > 1 && step < 4) || (step === 4 && onboardingState === 'NUEVO' && onboardingStep > 1)
-  
-  const handleBack = () => {
-    if (step > 1 && step < 4) {
-      if (step === 3 && onboardingState === 'ESCALONADO') {
-        setStep(1)
-      } else {
-        setStep((step - 1) as any)
+  const handleSeleccionarCategoria = (cat: Categoria) => {
+    setCategoriaSeleccionada(cat)
+  }
+
+  const handleContinuarDesdePaso2 = () => {
+    if (!categoriaSeleccionada) {
+      return toast.error('Por favor selecciona una categoría de competición')
+    }
+
+    if (categoriaSeleccionada.tipo === 'dupla') {
+      setStep(3)
+    } else {
+      // Si es Individual, completamos el registro directamente
+      ejecutarRegistroFinal()
+    }
+  }
+
+  const handleFinalizarPaso3 = (e: React.FormEvent) => {
+    e.preventDefault()
+    setGlobalError(null)
+
+    if (!compEmail.trim() || !compEmail.includes('@')) {
+      return toast.error('Ingresa un correo válido para tu compañero')
+    }
+    if (compEmail.trim().toLowerCase() === email.trim().toLowerCase()) {
+      return toast.error('El correo del compañero no puede ser igual al tuyo')
+    }
+    if (!compNombre.trim()) {
+      return toast.error('Ingresa el nombre completo de tu compañero')
+    }
+    if (compPhoneRaw.length < 7) {
+      return toast.error('Ingresa un teléfono válido para tu compañero')
+    }
+    if (!compGenero) {
+      return toast.error('Selecciona el género de tu compañero')
+    }
+
+    ejecutarRegistroFinal()
+  }
+
+  const ejecutarRegistroFinal = async () => {
+    if (!categoriaSeleccionada || !simulacion) {
+      return toast.error('Faltan datos de la competición o categoría')
+    }
+
+    setLoading(true)
+    setGlobalError(null)
+
+    const fullCedula = `${tipoDoc}${numeroDoc.trim()}`
+    const fullPhone = `${countryCode}${phoneRaw.replace(/\D/g, '')}`
+
+    const payload: any = {
+      cedula: fullCedula,
+      nombres: nombres.trim(),
+      email: email.trim().toLowerCase(),
+      telefono: fullPhone,
+      tallaFranela,
+      fechaNacimiento,
+      password,
+      simulacionId: simulacion.id,
+      categoriaId: categoriaSeleccionada.id
+    }
+
+    if (categoriaSeleccionada.tipo === 'dupla') {
+      const compFullPhone = `${compCountryCode}${compPhoneRaw.replace(/\D/g, '')}`
+      payload.companero = {
+        email: compEmail.trim().toLowerCase(),
+        nombre: compNombre.trim(),
+        telefono: compFullPhone,
+        genero: compGenero
       }
-    } else if (step === 4 && onboardingState === 'NUEVO' && onboardingStep > 1) {
-      setOnboardingStep((onboardingStep - 1) as any)
+    }
+
+    try {
+      const res = await registrarAtletaAutonomo(payload)
+
+      if (res.success) {
+        if (res.duplaInscritaSilenciosa) {
+          toast.success('¡Registro exitoso! Tu compañero fue vinculado automáticamente a la dupla.', { duration: 4000 })
+        } else if (categoriaSeleccionada.tipo === 'dupla') {
+          toast.success('¡Registro exitoso! Tu compañero ha sido preinscrito para activar su cuenta.', { duration: 4000 })
+        } else {
+          toast.success('¡Inscripción exitosa! Bienvenido a Hyrox.', { duration: 3000 })
+        }
+
+        // Auto-login con las credenciales creadas
+        const { error: loginErr } = await supabase.auth.signInWithPassword({
+          email: email.trim().toLowerCase(),
+          password
+        })
+
+        if (!loginErr) {
+          router.push('/dashboard')
+        } else {
+          router.push('/login')
+        }
+      } else {
+        setGlobalError(res.error || 'Error al completar el registro.')
+        toast.error(res.error || 'Error en el registro.')
+      }
+    } catch {
+      setGlobalError('Error de conexión al procesar la inscripción.')
+      toast.error('Error de red.')
+    } finally {
+      setLoading(false)
     }
   }
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-start pt-6 sm:pt-12 pb-12 px-5">
-      <div className="w-full max-w-md flex flex-col items-start">
-        
-        {/* Nav Back */}
-        {canGoBack ? (
-          <button 
-            type="button"
-            onClick={handleBack} 
-            disabled={loading}
-            className="mb-6 flex items-center text-sm font-medium text-zinc-400 hover:text-white transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4 mr-1" /> Volver
-          </button>
-        ) : (
-          <div className="mb-6 h-[20px]" />
-        )}
+    <main className="min-h-screen bg-black text-white flex flex-col justify-between p-4 md:p-8 relative overflow-hidden">
+      {/* Background Texture & Glow */}
+      <div
+        className="absolute inset-0 opacity-15 pointer-events-none bg-cover bg-center"
+        style={{ backgroundImage: `url('/images/LOGO TEXTURA01.png')` }}
+      />
+      <div className="absolute top-0 right-1/4 w-96 h-96 bg-[#02D7E5]/10 rounded-full blur-[128px] pointer-events-none" />
+      <div className="absolute bottom-0 left-1/4 w-96 h-96 bg-amber-500/10 rounded-full blur-[128px] pointer-events-none" />
 
-        {/* Encabezado Principal */}
-        <div className="w-full flex flex-col items-start mb-6">
-          <Image
-            src="/images/LOGO TEXTURA01.png"
-            alt="Logo Fitness Factory"
-            width={120}
-            height={40}
-            className="h-auto w-[120px] object-contain mb-4"
-            priority
-          />
-          <h1 className="text-2xl font-bold tracking-tight text-white mb-1">
-            {step === 4 && onboardingState === 'ESCALONADO' 
-              ? 'Activa tu Cuenta' 
-              : step === 4 && onboardingState === 'COMPLETO'
-              ? 'Verificación'
-              : step === 4 && onboardingState === 'NUEVO'
-              ? (onboardingStep === 1 
-                  ? 'Tus Datos' 
-                  : onboardingStep === 2 
-                  ? 'Elige tu Sede' 
-                  : onboardingStep === 3 
-                  ? 'Tu Perfil' 
-                  : 'Crea tu Contraseña')
-              : 'Crea tu Cuenta'}
-          </h1>
-          <p className="text-sm text-zinc-400">
-            {step === 4 && onboardingState === 'NUEVO'
-              ? `Paso ${onboardingStep} de 4`
-              : step === 4 && onboardingState === 'ESCALONADO'
-              ? 'Paso final: Define tu contraseña'
-              : step === 4 && onboardingState === 'COMPLETO'
-              ? 'Usuario existente'
-              : step === 3 && onboardingState === 'ESCALONADO'
-              ? 'Validación de Seguridad'
-              : `Paso ${step} de 3`}
-          </p>
+      {/* Header */}
+      <header className="relative z-10 max-w-2xl mx-auto w-full flex items-center justify-between pb-6 border-b border-white/10">
+        <Link href="/" className="flex items-center gap-2">
+          <span className="text-xl font-bold tracking-tight text-white">
+            HYROX <span className="text-[#02D7E5]">FACTORY</span>
+          </span>
+        </Link>
+        <span className="px-3 py-1 rounded-full bg-[#02D7E5]/10 border border-[#02D7E5]/30 text-[#02D7E5] font-bold text-[10px] uppercase tracking-widest flex items-center gap-1.5">
+          <Flame className="w-3 h-3 text-[#02D7E5]" />
+          Inscripción Oficial
+        </span>
+      </header>
 
-          {/* Stepper Progress Bar para usuario NUEVO en Step 4 */}
-          {step === 4 && onboardingState === 'NUEVO' && (
-            <div className="flex items-center gap-1.5 w-full mt-3">
-              {[1, 2, 3, 4].map((s) => (
-                <div
-                  key={s}
-                  className={`h-1 flex-1 rounded-full transition-all duration-300 ${
-                    s <= onboardingStep ? 'bg-[#02D7E5]' : 'bg-zinc-800'
-                  }`}
-                />
-              ))}
-            </div>
-          )}
+      {/* Wizard Container */}
+      <div className="relative z-10 max-w-xl mx-auto w-full my-auto py-8">
+        {/* Stepper Indicator */}
+        <div className="mb-8">
+          <div className="flex items-center justify-between relative">
+            <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-zinc-800 -translate-y-1/2 z-0" />
+            <div
+              className="absolute top-1/2 left-0 h-0.5 bg-[#02D7E5] -translate-y-1/2 transition-all duration-500 z-0"
+              style={{
+                width: step === 1 ? '0%' : step === 2 ? (categoriaSeleccionada?.tipo === 'dupla' ? '50%' : '100%') : '100%'
+              }}
+            />
+
+            {[
+              { num: 1, label: 'Perfil & OTP' },
+              { num: 2, label: 'Categoría' },
+              { num: 3, label: 'Dupla', conditional: categoriaSeleccionada?.tipo === 'dupla' }
+            ]
+              .filter(s => s.conditional !== false || step === 3)
+              .map(s => {
+                const isActive = step === s.num
+                const isDone = step > s.num
+                return (
+                  <div key={s.num} className="relative z-10 flex flex-col items-center">
+                    <div
+                      className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs transition-all duration-300 ${
+                        isDone
+                          ? 'bg-[#02D7E5] text-black shadow-lg shadow-[#02D7E5]/30'
+                          : isActive
+                          ? 'bg-zinc-950 border-2 border-[#02D7E5] text-[#02D7E5] shadow-lg shadow-[#02D7E5]/20'
+                          : 'bg-zinc-900 border border-zinc-700 text-zinc-500'
+                      }`}
+                    >
+                      {isDone ? <CheckCircle2 className="w-4 h-4" /> : s.num}
+                    </div>
+                    <span
+                      className={`text-[10px] font-bold uppercase tracking-wider mt-1.5 ${
+                        isActive || isDone ? 'text-white' : 'text-zinc-600'
+                      }`}
+                    >
+                      {s.label}
+                    </span>
+                  </div>
+                )
+              })}
+          </div>
         </div>
 
-        <div className="w-full relative min-h-[300px]">
-          {/* Step 1: Cédula */}
+        {/* Global Error Banner */}
+        {globalError && (
+          <div className="mb-6 p-4 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-start gap-3 animate-in fade-in">
+            <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+            <div className="text-xs text-red-200 leading-relaxed font-medium">
+              {globalError}
+            </div>
+          </div>
+        )}
+
+        <AnimatePresence mode="wait">
+          {/* ========================================================================= */}
+          {/* PASO 1: DATOS PERSONALES, CREDENCIALES & OTP                               */}
+          {/* ========================================================================= */}
           {step === 1 && (
-            <form onSubmit={handleStep1} className="space-y-6 w-full animate-in slide-in-from-right-4 fade-in duration-300">
-              <div className="space-y-3">
-                <label className="block text-sm font-bold text-zinc-300">
-                  Cédula de Identidad
-                </label>
-                <div className="flex flex-row gap-2">
-                  <select
-                    value={tipoDocumento}
-                    onChange={e => setTipoDocumento(e.target.value)}
-                    disabled={loading}
-                    className="w-[80px] p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all text-lg font-medium appearance-none text-center cursor-pointer disabled:opacity-50"
-                  >
-                    <option value="V">V</option>
-                    <option value="E">E</option>
-                    <option value="J">J</option>
-                    <option value="G">G</option>
-                    <option value="P">P</option>
-                  </select>
-                  <input
-                    required
-                    type="text"
-                    value={numeroDocumento}
-                    onChange={e => {
-                      const val = e.target.value.replace(/\D/g, '').slice(0, 9)
-                      setNumeroDocumento(val)
-                    }}
-                    disabled={loading}
-                    className="flex-1 p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all disabled:opacity-50 text-lg font-medium"
-                    placeholder="Ej. 12345678"
-                    autoFocus
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading || numeroDocumento.length < 7}
-                className="w-full flex items-center justify-center gap-2 py-4 font-bold text-black bg-[#02D7E5] hover:bg-[#02D7E5]/90 rounded-xl transition-all disabled:opacity-50 mt-4 shadow-[0_0_20px_rgba(2,215,229,0.2)]"
-              >
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : (
-                  <>Continuar <ArrowRight className="w-5 h-5" /></>
-                )}
-              </button>
-
-              <div className="pt-6 mt-6 border-t border-zinc-900">
-                <Link href="/login" className="text-sm font-medium text-zinc-400 hover:text-white transition-colors flex items-center">
-                  ¿Ya tienes cuenta? <span className="text-[#02D7E5] ml-1">Inicia sesión</span>
-                </Link>
-              </div>
-            </form>
-          )}
-
-          {/* Step 2: Teléfono */}
-          {step === 2 && (
-            <form onSubmit={handleStep2Telefono} className="space-y-6 w-full animate-in slide-in-from-right-4 fade-in duration-300">
-              <div className="space-y-3">
-                <label className="block text-sm font-bold text-zinc-300">
-                  Teléfono (WhatsApp)
-                </label>
-                <div className="flex flex-row gap-2">
-                  <select
-                    value={countryCode}
-                    onChange={e => setCountryCode(e.target.value)}
-                    disabled={loading}
-                    className="w-[100px] p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all text-lg font-medium appearance-none text-center cursor-pointer disabled:opacity-50"
-                  >
-                    <option value="+58">+58 VE</option>
-                    <option value="+1">+1 US</option>
-                    <option value="+34">+34 ES</option>
-                    <option value="+57">+57 CO</option>
-                    <option value="+54">+54 AR</option>
-                    <option value="+56">+56 CL</option>
-                    <option value="+51">+51 PE</option>
-                  </select>
-                  <input
-                    required
-                    type="tel"
-                    value={phoneFormatted}
-                    onChange={handlePhoneChange}
-                    disabled={loading}
-                    className="flex-1 p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all disabled:opacity-50 text-lg font-medium tracking-wide"
-                    placeholder="Ej. 414 123 4567"
-                    autoFocus
-                  />
-                </div>
-                <p className="text-xs text-zinc-500 mt-2">
-                  Enviaremos un código de seguridad por WhatsApp para validar tu cuenta.
+            <motion.div
+              key="step1"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              transition={{ duration: 0.3 }}
+              className="rounded-3xl bg-zinc-950/85 backdrop-blur-xl border border-white/10 p-6 md:p-8 shadow-2xl space-y-6"
+            >
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold text-[#02D7E5] uppercase tracking-widest">
+                  Paso 1 de {categoriaSeleccionada?.tipo === 'dupla' ? '3' : '2'}
+                </span>
+                <h1 className="text-2xl font-bold text-white tracking-tight">
+                  Registro de Atleta Hyrox
+                </h1>
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  Completa tus datos personales y valida tu WhatsApp para recibir tu asignación de heat y tiempos de carrera.
                 </p>
               </div>
 
-              <button
-                type="submit"
-                disabled={loading || phoneRaw.length < 10}
-                className="w-full flex items-center justify-center gap-2 py-4 font-bold text-black bg-[#02D7E5] hover:bg-[#02D7E5]/90 rounded-xl transition-all disabled:opacity-50 mt-4 shadow-[0_0_20px_rgba(2,215,229,0.2)]"
-              >
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Enviar Código OTP'}
-              </button>
-            </form>
-          )}
-
-          {/* Step 3: OTP */}
-          {step === 3 && (
-            <form onSubmit={handleVerifyOtp} className="space-y-8 w-full animate-in slide-in-from-right-4 fade-in duration-300">
-              <div className="space-y-2">
-                <div className="flex items-center gap-3 mb-4">
-                  <ShieldCheck className="w-8 h-8 text-[#02D7E5] shrink-0" />
-                  {onboardingState === 'ESCALONADO' ? (
-                    <p className="text-sm text-zinc-300 leading-relaxed">
-                      Hemos enviado un código de seguridad al número que registraste en recepción{' '}
-                      <span className="font-bold text-white tracking-wide">
-                        (termina en {telefonoUltimos4 || telefono.slice(-4)})
-                      </span>.
-                    </p>
-                  ) : (
-                    <p className="text-sm text-zinc-300 leading-relaxed">
-                      Hemos enviado un código a <br/>
-                      <span className="font-bold text-white tracking-wide">{telefono}</span>
-                    </p>
-                  )}
-                </div>
-                
-                <div className="flex justify-between gap-2 mt-6">
-                  {otp.map((digit, index) => (
-                    <input
-                      key={index}
-                      ref={el => { inputRefs.current[index] = el }}
-                      type="text"
-                      maxLength={1}
-                      value={digit}
-                      onChange={e => handleOtpChange(index, e.target.value)}
-                      onKeyDown={e => handleOtpKeyDown(index, e)}
-                      disabled={loading}
-                      className="w-12 h-14 sm:w-14 sm:h-16 text-center text-2xl font-bold bg-zinc-900 border border-zinc-800 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-[#02D7E5] focus:border-transparent transition-all disabled:opacity-50"
-                      autoFocus={index === 0}
-                    />
-                  ))}
-                </div>
-                {errorVisual && (
-                  <p className="text-red-400 text-sm font-medium mt-3 text-center">{errorVisual}</p>
-                )}
-              </div>
-
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={loading || otp.join('').length < 6}
-                  className="w-full flex items-center justify-center gap-2 py-4 font-bold text-black bg-[#02D7E5] hover:bg-[#02D7E5]/90 rounded-xl transition-all disabled:opacity-50 shadow-[0_0_20px_rgba(2,215,229,0.2)]"
-                >
-                  {loading ? (
-                    <><Loader2 className="w-5 h-5 animate-spin" /> Validando...</>
-                  ) : 'Verificar Código'}
-                </button>
-              </div>
-
-              <div className="text-center pt-2">
-                {timer > 0 ? (
-                  <p className="text-sm text-zinc-500 font-medium">Reenviar código en {timer}s</p>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleResendOtp}
-                    disabled={loading}
-                    className="text-sm font-bold text-[#02D7E5] hover:text-white transition-colors"
-                  >
-                    Reenviar código ahora
-                  </button>
-                )}
-              </div>
-            </form>
-          )}
-
-          {/* Step 4: Smart Onboarding Stepper */}
-          {step === 4 && (
-            <div className="w-full animate-in slide-in-from-right-4 fade-in duration-300">
-              
-              {/* Caso COMPLETO: Bloqueo con alerta */}
-              {onboardingState === 'COMPLETO' && (
-                <div className="p-6 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-5">
-                  <div className="w-14 h-14 mx-auto rounded-full bg-amber-500/20 flex items-center justify-center text-amber-400">
-                    <AlertCircle className="w-8 h-8" />
-                  </div>
-                  <div className="space-y-2">
-                    <h2 className="text-xl font-bold text-white">Cuenta Ya Registrada</h2>
-                    <p className="text-sm text-zinc-300 leading-relaxed">
-                      Esta cédula ya está registrada y activa. Por favor, inicia sesión con tu contraseña.
-                    </p>
-                  </div>
-                  <Link
-                    href="/login"
-                    className="inline-flex w-full items-center justify-center gap-2 py-3.5 font-bold text-black bg-[#02D7E5] hover:bg-[#02D7E5]/90 rounded-xl transition-all shadow-[0_0_20px_rgba(2,215,229,0.2)]"
-                  >
-                    Ir a Iniciar Sesión <ArrowRight className="w-5 h-5" />
-                  </Link>
-                </div>
-              )}
-
-              {/* Caso NUEVO: Wizard / Stepper de 4 Pasos */}
-              {onboardingState === 'NUEVO' && (
-                <div className="w-full">
-                  
-                  {/* NUEVO - Paso 1: Nombres y Apellidos */}
-                  {onboardingStep === 1 && (
-                    <form onSubmit={handleNextStep1} className="space-y-5 w-full animate-in slide-in-from-right-4 fade-in duration-300">
-                      <div className="space-y-2">
-                        <label className="block text-sm font-bold text-zinc-300">Nombre</label>
-                        <input
-                          required
-                          type="text"
-                          value={nombre}
-                          onChange={e => setNombre(e.target.value)}
-                          disabled={loading}
-                          className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all text-base font-medium"
-                          placeholder="Ej. Juan"
-                          autoFocus
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="block text-sm font-bold text-zinc-300">Apellido</label>
-                        <input
-                          required
-                          type="text"
-                          value={apellido}
-                          onChange={e => setApellido(e.target.value)}
-                          disabled={loading}
-                          className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all text-base font-medium"
-                          placeholder="Ej. Pérez"
-                        />
-                      </div>
-
-                      <button
-                        type="submit"
-                        disabled={loading || !nombre.trim() || !apellido.trim()}
-                        className="w-full flex items-center justify-center gap-2 py-4 font-bold text-black bg-[#02D7E5] hover:bg-[#02D7E5]/90 rounded-xl transition-all disabled:opacity-50 mt-6 shadow-[0_0_20px_rgba(2,215,229,0.2)]"
+              <form onSubmit={handleAvanzarPaso1} className="space-y-4">
+                {/* Cédula y Nombres */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 block">
+                      Cédula / Identidad
+                    </label>
+                    <div className="flex gap-2">
+                      <select
+                        value={tipoDoc}
+                        onChange={e => setTipoDoc(e.target.value)}
+                        className="px-2.5 py-3 bg-zinc-900 border border-white/10 rounded-2xl text-xs font-bold text-white focus:outline-none focus:border-[#02D7E5]"
                       >
-                        Continuar <ArrowRight className="w-5 h-5" />
-                      </button>
-                    </form>
-                  )}
-
-                  {/* NUEVO - Paso 2: Sede Principal */}
-                  {onboardingStep === 2 && (
-                    <form onSubmit={handleNextStep2} className="space-y-5 w-full animate-in slide-in-from-right-4 fade-in duration-300">
-                      <div className="space-y-3">
-                        <label className="block text-sm font-bold text-zinc-300">Selecciona tu Sede Principal</label>
-                        {isLoadingSedes ? (
-                          <div className="flex items-center justify-center p-8">
-                            <Loader2 className="w-6 h-6 text-[#02D7E5] animate-spin" />
-                          </div>
-                        ) : errorSedes ? (
-                          <div className="text-red-400 text-sm p-4 bg-red-950/30 border border-red-900/50 rounded-xl">
-                            Error cargando las sedes disponibles.
-                          </div>
-                        ) : (
-                          <div className="space-y-2.5">
-                            {sedes.map(sede => (
-                              <button
-                                type="button"
-                                key={sede.id}
-                                onClick={() => setSedeId(sede.id)}
-                                className={`w-full p-4 rounded-xl border text-left transition-all flex items-center justify-between ${
-                                  sedeId === sede.id 
-                                    ? 'bg-[#02D7E5]/10 border-[#02D7E5] text-[#02D7E5]' 
-                                    : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700'
-                                }`}
-                              >
-                                <div>
-                                  <p className="font-bold text-base">{sede.nombre}</p>
-                                  {sede.ciudad && (
-                                    <p className="text-xs text-zinc-500 mt-0.5">{sede.ciudad}</p>
-                                  )}
-                                </div>
-                                <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${
-                                  sedeId === sede.id ? 'border-[#02D7E5] bg-[#02D7E5]' : 'border-zinc-700'
-                                }`}>
-                                  {sedeId === sede.id && <div className="w-2 h-2 rounded-full bg-black" />}
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      <button
-                        type="submit"
-                        disabled={loading || !sedeId}
-                        className="w-full flex items-center justify-center gap-2 py-4 font-bold text-black bg-[#02D7E5] hover:bg-[#02D7E5]/90 rounded-xl transition-all disabled:opacity-50 mt-6 shadow-[0_0_20px_rgba(2,215,229,0.2)]"
-                      >
-                        Continuar <ArrowRight className="w-5 h-5" />
-                      </button>
-                    </form>
-                  )}
-
-                  {/* NUEVO - Paso 3: Fecha de Nacimiento y Género */}
-                  {onboardingStep === 3 && (
-                    <form onSubmit={handleNextStep3} className="space-y-5 w-full animate-in slide-in-from-right-4 fade-in duration-300">
-                      <div className="space-y-2">
-                        <label className="block text-sm font-bold text-zinc-300">Fecha de Nacimiento</label>
-                        <input
-                          required
-                          type="date"
-                          value={fechaNacimiento}
-                          onChange={e => setFechaNacimiento(e.target.value)}
-                          max={new Date().toISOString().split('T')[0]}
-                          disabled={loading}
-                          className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all text-base font-medium disabled:opacity-50"
-                          style={{ colorScheme: 'dark' }}
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="block text-sm font-bold text-zinc-300">Género</label>
-                        <div className="grid grid-cols-3 gap-2.5">
-                          {[
-                            { id: 'M', label: 'Masculino' },
-                            { id: 'F', label: 'Femenino' },
-                            { id: 'OTRO', label: 'Otro' }
-                          ].map(item => (
-                            <button
-                              type="button"
-                              key={item.id}
-                              onClick={() => setGenero(item.id as any)}
-                              className={`py-3.5 px-3 rounded-xl border text-center font-bold text-sm transition-all ${
-                                genero === item.id
-                                  ? 'bg-[#02D7E5]/10 border-[#02D7E5] text-[#02D7E5]'
-                                  : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-700'
-                              }`}
-                            >
-                              {item.label}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <button
-                        type="submit"
-                        disabled={loading || !fechaNacimiento || !genero}
-                        className="w-full flex items-center justify-center gap-2 py-4 font-bold text-black bg-[#02D7E5] hover:bg-[#02D7E5]/90 rounded-xl transition-all disabled:opacity-50 mt-6 shadow-[0_0_20px_rgba(2,215,229,0.2)]"
-                      >
-                        Continuar <ArrowRight className="w-5 h-5" />
-                      </button>
-                    </form>
-                  )}
-
-                  {/* NUEVO - Paso 4: Contraseña y Términos */}
-                  {onboardingStep === 4 && (
-                    <form onSubmit={handleFinalSubmit} className="space-y-5 w-full animate-in slide-in-from-right-4 fade-in duration-300">
-                      <div className="space-y-2">
-                        <label className="block text-sm font-bold text-zinc-300">Crea tu Contraseña</label>
-                        <input
-                          required
-                          type="password"
-                          value={password}
-                          onChange={e => setPassword(e.target.value)}
-                          disabled={loading}
-                          placeholder="Mínimo 8 caracteres"
-                          className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all text-base font-medium disabled:opacity-50"
-                          autoFocus
-                        />
-
-                        {/* Validador visual de requisitos en tiempo real */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 text-xs">
-                          <div className={`flex items-center gap-2 transition-colors duration-200 ${hasMinLength ? 'text-[#02D7E5] font-semibold' : 'text-zinc-500'}`}>
-                            <div className={`w-4 h-4 rounded-full flex items-center justify-center transition-all duration-200 ${hasMinLength ? 'bg-[#02D7E5]/20 text-[#02D7E5]' : 'border border-zinc-700 text-transparent'}`}>
-                              <Check className="w-2.5 h-2.5 stroke-[3]" />
-                            </div>
-                            <span>Mínimo 8 caracteres</span>
-                          </div>
-
-                          <div className={`flex items-center gap-2 transition-colors duration-200 ${hasUppercase ? 'text-[#02D7E5] font-semibold' : 'text-zinc-500'}`}>
-                            <div className={`w-4 h-4 rounded-full flex items-center justify-center transition-all duration-200 ${hasUppercase ? 'bg-[#02D7E5]/20 text-[#02D7E5]' : 'border border-zinc-700 text-transparent'}`}>
-                              <Check className="w-2.5 h-2.5 stroke-[3]" />
-                            </div>
-                            <span>Al menos una mayúscula</span>
-                          </div>
-
-                          <div className={`flex items-center gap-2 transition-colors duration-200 ${hasNumber ? 'text-[#02D7E5] font-semibold' : 'text-zinc-500'}`}>
-                            <div className={`w-4 h-4 rounded-full flex items-center justify-center transition-all duration-200 ${hasNumber ? 'bg-[#02D7E5]/20 text-[#02D7E5]' : 'border border-zinc-700 text-transparent'}`}>
-                              <Check className="w-2.5 h-2.5 stroke-[3]" />
-                            </div>
-                            <span>Al menos un número</span>
-                          </div>
-
-                          <div className={`flex items-center gap-2 transition-colors duration-200 ${hasSpecialChar ? 'text-[#02D7E5] font-semibold' : 'text-zinc-500'}`}>
-                            <div className={`w-4 h-4 rounded-full flex items-center justify-center transition-all duration-200 ${hasSpecialChar ? 'bg-[#02D7E5]/20 text-[#02D7E5]' : 'border border-zinc-700 text-transparent'}`}>
-                              <Check className="w-2.5 h-2.5 stroke-[3]" />
-                            </div>
-                            <span>Un símbolo o especial</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="block text-sm font-bold text-zinc-300">Confirmar Contraseña</label>
-                        <input
-                          required
-                          type="password"
-                          value={confirmPassword}
-                          onChange={e => setConfirmPassword(e.target.value)}
-                          disabled={loading}
-                          placeholder="Repite tu contraseña"
-                          className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all text-base font-medium disabled:opacity-50"
-                        />
-                        {confirmPassword.length > 0 && (
-                          <div className="pt-1 text-xs">
-                            {password === confirmPassword ? (
-                              <p className="text-[#02D7E5] font-semibold flex items-center gap-1.5">
-                                <Check className="w-3.5 h-3.5 stroke-[3]" /> Las contraseñas coinciden
-                              </p>
-                            ) : (
-                              <p className="text-red-400 font-medium">
-                                Las contraseñas no coinciden
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      <label className="flex items-start gap-3 cursor-pointer pt-2">
-                        <input
-                          required
-                          type="checkbox"
-                          checked={aceptoTerminos}
-                          onChange={e => setAceptoTerminos(e.target.checked)}
-                          disabled={loading}
-                          className="mt-1 w-4 h-4 rounded border-zinc-800 bg-zinc-900 text-[#02D7E5] focus:ring-[#02D7E5]"
-                        />
-                        <span className="text-xs text-zinc-400 leading-normal">
-                          Acepto los <span className="text-[#02D7E5] font-semibold">Términos y Condiciones</span> y la <span className="text-[#02D7E5] font-semibold">Política de Privacidad</span> de Fitness Factory.
-                        </span>
-                      </label>
-
-                      {errorVisual && (
-                        <p className="text-red-400 text-sm font-medium text-center">{errorVisual}</p>
-                      )}
-
-                      <button
-                        type="submit"
-                        disabled={loading || !isPasswordValid || password !== confirmPassword || !aceptoTerminos}
-                        className="w-full flex items-center justify-center gap-2 py-4 font-bold text-black bg-[#02D7E5] hover:bg-[#02D7E5]/90 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_20px_rgba(2,215,229,0.2)] mt-4"
-                      >
-                        {loading ? (
-                          <><Loader2 className="w-5 h-5 animate-spin" /> Creando Cuenta...</>
-                        ) : 'Crear Cuenta y Entrar'}
-                      </button>
-                    </form>
-                  )}
-
-                </div>
-              )}
-
-              {/* Caso ESCALONADO: Salto Directo a Paso 4 con Banner de Recepción */}
-              {onboardingState === 'ESCALONADO' && (
-                <form onSubmit={handleFinalSubmit} className="space-y-5 w-full animate-in slide-in-from-right-4 fade-in duration-300">
-                  <div className="p-4 rounded-xl bg-[#02D7E5]/10 border border-[#02D7E5]/30">
-                    <p className="text-sm font-medium text-[#02D7E5] leading-relaxed">
-                      ¡Hola{preUserData?.nombre_completo ? ` ${preUserData.nombre_completo.split(' ')[0]}` : ''}! Vemos que ya te pre-registraste en recepción.
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="block text-sm font-bold text-zinc-300">Nueva Contraseña</label>
-                    <input
-                      required
-                      type="password"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      disabled={loading}
-                      placeholder="Mínimo 8 caracteres"
-                      className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all text-base font-medium disabled:opacity-50"
-                      autoFocus
-                    />
-
-                    {/* Validador visual de requisitos en tiempo real */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 text-xs">
-                      <div className={`flex items-center gap-2 transition-colors duration-200 ${hasMinLength ? 'text-[#02D7E5] font-semibold' : 'text-zinc-500'}`}>
-                        <div className={`w-4 h-4 rounded-full flex items-center justify-center transition-all duration-200 ${hasMinLength ? 'bg-[#02D7E5]/20 text-[#02D7E5]' : 'border border-zinc-700 text-transparent'}`}>
-                          <Check className="w-2.5 h-2.5 stroke-[3]" />
-                        </div>
-                        <span>Mínimo 8 caracteres</span>
-                      </div>
-
-                      <div className={`flex items-center gap-2 transition-colors duration-200 ${hasUppercase ? 'text-[#02D7E5] font-semibold' : 'text-zinc-500'}`}>
-                        <div className={`w-4 h-4 rounded-full flex items-center justify-center transition-all duration-200 ${hasUppercase ? 'bg-[#02D7E5]/20 text-[#02D7E5]' : 'border border-zinc-700 text-transparent'}`}>
-                          <Check className="w-2.5 h-2.5 stroke-[3]" />
-                        </div>
-                        <span>Al menos una mayúscula</span>
-                      </div>
-
-                      <div className={`flex items-center gap-2 transition-colors duration-200 ${hasNumber ? 'text-[#02D7E5] font-semibold' : 'text-zinc-500'}`}>
-                        <div className={`w-4 h-4 rounded-full flex items-center justify-center transition-all duration-200 ${hasNumber ? 'bg-[#02D7E5]/20 text-[#02D7E5]' : 'border border-zinc-700 text-transparent'}`}>
-                          <Check className="w-2.5 h-2.5 stroke-[3]" />
-                        </div>
-                        <span>Al menos un número</span>
-                      </div>
-
-                      <div className={`flex items-center gap-2 transition-colors duration-200 ${hasSpecialChar ? 'text-[#02D7E5] font-semibold' : 'text-zinc-500'}`}>
-                        <div className={`w-4 h-4 rounded-full flex items-center justify-center transition-all duration-200 ${hasSpecialChar ? 'bg-[#02D7E5]/20 text-[#02D7E5]' : 'border border-zinc-700 text-transparent'}`}>
-                          <Check className="w-2.5 h-2.5 stroke-[3]" />
-                        </div>
-                        <span>Un símbolo o especial</span>
-                      </div>
+                        <option value="V">V</option>
+                        <option value="E">E</option>
+                        <option value="J">J</option>
+                        <option value="P">P</option>
+                      </select>
+                      <input
+                        type="text"
+                        required
+                        placeholder="12345678"
+                        value={numeroDoc}
+                        onChange={e => setNumeroDoc(e.target.value.replace(/\D/g, '').slice(0, 9))}
+                        className="flex-1 px-3.5 py-3 bg-zinc-900/90 border border-white/10 rounded-2xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
+                      />
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <label className="block text-sm font-bold text-zinc-300">Confirmar Contraseña</label>
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 block">
+                      Nombres Completos
+                    </label>
                     <input
+                      type="text"
                       required
-                      type="password"
-                      value={confirmPassword}
-                      onChange={e => setConfirmPassword(e.target.value)}
-                      disabled={loading}
-                      placeholder="Repite tu contraseña"
-                      className="w-full p-4 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-[#02D7E5] focus:border-[#02D7E5] transition-all text-base font-medium disabled:opacity-50"
+                      placeholder="Ej. Roberto Gómez"
+                      value={nombres}
+                      onChange={e => setNombres(e.target.value)}
+                      className="w-full px-4 py-3 bg-zinc-900/90 border border-white/10 rounded-2xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
                     />
-                    {confirmPassword.length > 0 && (
-                      <div className="pt-1 text-xs">
-                        {password === confirmPassword ? (
-                          <p className="text-[#02D7E5] font-semibold flex items-center gap-1.5">
-                            <Check className="w-3.5 h-3.5 stroke-[3]" /> Las contraseñas coinciden
-                          </p>
-                        ) : (
-                          <p className="text-red-400 font-medium">
-                            Las contraseñas no coinciden
-                          </p>
-                        )}
-                      </div>
+                  </div>
+                </div>
+
+                {/* Email Obligatorio */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 block">
+                    Correo Electrónico (Obligatorio)
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="email"
+                      required
+                      placeholder="atleta@ejemplo.com"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      className="w-full pl-11 pr-4 py-3 bg-zinc-900/90 border border-white/10 rounded-2xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
+                    />
+                  </div>
+                </div>
+
+                {/* Fecha de Nacimiento y Talla */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 block">
+                      Fecha de Nacimiento
+                    </label>
+                    <div className="relative">
+                      <Calendar className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="date"
+                        required
+                        value={fechaNacimiento}
+                        onChange={e => setFechaNacimiento(e.target.value)}
+                        className="w-full pl-10 pr-3 py-3 bg-zinc-900/90 border border-white/10 rounded-2xl text-xs text-white focus:outline-none focus:border-[#02D7E5]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 block">
+                      Talla Franela
+                    </label>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {(['S', 'M', 'L', 'XL', 'XXL'] as const).map(t => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setTallaFranela(t)}
+                          className={`py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                            tallaFranela === t
+                              ? 'bg-[#02D7E5] text-black shadow-md shadow-[#02D7E5]/20'
+                              : 'bg-zinc-900 text-zinc-400 hover:text-white border border-white/10'
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bloque de Teléfono y Validación OTP */}
+                <div className="p-4 rounded-2xl bg-zinc-900/70 border border-zinc-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase text-zinc-300 flex items-center gap-1.5">
+                      <Phone className="w-3.5 h-3.5 text-[#02D7E5]" />
+                      <span>Teléfono WhatsApp</span>
+                    </span>
+                    {otpVerified && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/25">
+                        <CheckCircle2 className="w-3 h-3" />
+                        WhatsApp Verificado
+                      </span>
                     )}
                   </div>
 
-                  <label className="flex items-start gap-3 cursor-pointer pt-2">
+                  <div className="flex gap-2">
+                    <select
+                      value={countryCode}
+                      onChange={e => setCountryCode(e.target.value)}
+                      disabled={otpVerified}
+                      className="px-3 py-2.5 bg-zinc-950 border border-white/10 rounded-xl text-xs font-bold text-white focus:outline-none"
+                    >
+                      <option value="+58">+58</option>
+                      <option value="+1">+1</option>
+                      <option value="+34">+34</option>
+                      <option value="+57">+57</option>
+                      <option value="+56">+56</option>
+                    </select>
                     <input
+                      type="tel"
                       required
-                      type="checkbox"
-                      checked={aceptoTerminos}
-                      onChange={e => setAceptoTerminos(e.target.checked)}
-                      disabled={loading}
-                      className="mt-1 w-4 h-4 rounded border-zinc-800 bg-zinc-900 text-[#02D7E5] focus:ring-[#02D7E5]"
+                      disabled={otpVerified}
+                      placeholder="4121234567"
+                      value={phoneRaw}
+                      onChange={e => setPhoneRaw(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                      className="flex-1 px-4 py-2.5 bg-zinc-950 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
                     />
-                    <span className="text-xs text-zinc-400 leading-normal">
-                      Acepto los <span className="text-[#02D7E5] font-semibold">Términos y Condiciones</span> y la <span className="text-[#02D7E5] font-semibold">Política de Privacidad</span> de Fitness Factory.
-                    </span>
-                  </label>
+                  </div>
 
-                  {errorVisual && (
-                    <p className="text-red-400 text-sm font-medium text-center">{errorVisual}</p>
+                  {!otpVerified && (
+                    <div>
+                      {!otpSent ? (
+                        <button
+                          type="button"
+                          onClick={handleEnviarOtp}
+                          disabled={isSendingOtp || phoneRaw.length < 7}
+                          className="w-full py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                        >
+                          {isSendingOtp ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Enviando código...</span>
+                            </>
+                          ) : (
+                            <span>Validar Número con Código OTP</span>
+                          )}
+                        </button>
+                      ) : (
+                        <div className="space-y-3 pt-2">
+                          <p className="text-[11px] text-zinc-400">
+                            Ingresa el código numérico de 6 dígitos enviado por WhatsApp:
+                          </p>
+
+                          <div className="flex justify-between gap-1.5">
+                            {otpDigits.map((digit, i) => (
+                              <input
+                                key={i}
+                                ref={el => { otpInputRefs.current[i] = el }}
+                                type="text"
+                                inputMode="numeric"
+                                maxLength={1}
+                                value={digit}
+                                onChange={e => handleOtpChange(i, e.target.value)}
+                                onKeyDown={e => handleOtpKeyDown(i, e)}
+                                className="w-10 h-12 text-center text-lg font-bold bg-zinc-950 border border-white/15 rounded-xl text-white focus:outline-none focus:border-[#02D7E5]"
+                              />
+                            ))}
+                          </div>
+
+                          <div className="flex items-center justify-between text-[11px] pt-1">
+                            <span className="text-zinc-500">
+                              {timer > 0 ? `Reenviar en ${timer}s` : '¿No recibiste el código?'}
+                            </span>
+                            {timer === 0 && (
+                              <button
+                                type="button"
+                                onClick={handleEnviarOtp}
+                                className="text-[#02D7E5] font-bold hover:underline cursor-pointer"
+                              >
+                                Reenviar Código
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
+                </div>
+
+                {/* Credenciales de Acceso */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 block">
+                      Contraseña
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="password"
+                        required
+                        placeholder="••••••••"
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        className="w-full pl-10 pr-3 py-3 bg-zinc-900/90 border border-white/10 rounded-2xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 block">
+                      Confirmar Contraseña
+                    </label>
+                    <div className="relative">
+                      <Lock className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="password"
+                        required
+                        placeholder="••••••••"
+                        value={confirmPassword}
+                        onChange={e => setConfirmPassword(e.target.value)}
+                        className="w-full pl-10 pr-3 py-3 bg-zinc-900/90 border border-white/10 rounded-2xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading || !otpVerified || !isPasswordReady}
+                  className="w-full py-4 rounded-2xl bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold text-sm shadow-xl shadow-[#02D7E5]/25 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 mt-4"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-black" />
+                      <span>Verificando Datos...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>Continuar a Selección de Categoría</span>
+                      <ArrowRight className="w-4 h-4 text-black" />
+                    </>
+                  )}
+                </button>
+              </form>
+
+              <div className="pt-1 text-center">
+                <p className="text-xs text-zinc-500">
+                  ¿Ya tienes una cuenta o recibiste una invitación?{' '}
+                  <Link href="/activacion" className="text-[#02D7E5] font-bold hover:underline">
+                    Activa tu cupo aquí
+                  </Link>
+                </p>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* PASO 2: SELECCIÓN DE CATEGORÍA                                              */}
+          {/* ========================================================================= */}
+          {step === 2 && (
+            <motion.div
+              key="step2"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              transition={{ duration: 0.3 }}
+              className="rounded-3xl bg-zinc-950/85 backdrop-blur-xl border border-white/10 p-6 md:p-8 shadow-2xl space-y-6"
+            >
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold text-[#02D7E5] uppercase tracking-widest">
+                  Paso 2 de {categoriaSeleccionada?.tipo === 'dupla' ? '3' : '2'}
+                </span>
+                <h1 className="text-2xl font-bold text-white tracking-tight">
+                  Selecciona tu Categoría
+                </h1>
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  Competición activa: <strong className="text-white">{simulacion?.nombre || 'Hyrox Official Event'}</strong>. Elige la modalidad en la que vas a competir.
+                </p>
+              </div>
+
+              {loadingCategorias ? (
+                <div className="py-12 flex flex-col items-center justify-center gap-3 text-zinc-500">
+                  <Loader2 className="w-6 h-6 animate-spin text-[#02D7E5]" />
+                  <span className="text-xs font-semibold">Cargando categorías oficiales...</span>
+                </div>
+              ) : categorias.length === 0 ? (
+                <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs text-center font-semibold">
+                  No hay categorías configuradas para esta simulación. Contacta al administrador.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  {categorias.map(cat => {
+                    const isSelected = categoriaSeleccionada?.id === cat.id
+                    const isDupla = cat.tipo === 'dupla'
+
+                    return (
+                      <div
+                        key={cat.id}
+                        onClick={() => handleSeleccionarCategoria(cat)}
+                        className={`p-4 rounded-2xl border transition-all cursor-pointer flex flex-col justify-between space-y-3 ${
+                          isSelected
+                            ? 'bg-[#02D7E5]/15 border-[#02D7E5] shadow-lg shadow-[#02D7E5]/15 scale-[1.01]'
+                            : 'bg-zinc-900/60 hover:bg-zinc-900 border-white/10 hover:border-white/20'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider ${
+                              isDupla
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                : 'bg-[#02D7E5]/20 text-[#02D7E5] border border-[#02D7E5]/40'
+                            }`}
+                          >
+                            {isDupla ? 'Dupla' : 'Individual'}
+                          </span>
+
+                          <div
+                            className={`w-5 h-5 rounded-full flex items-center justify-center border ${
+                              isSelected
+                                ? 'bg-[#02D7E5] border-[#02D7E5] text-black'
+                                : 'border-zinc-700'
+                            }`}
+                          >
+                            {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-black" />}
+                          </div>
+                        </div>
+
+                        <div>
+                          <h3 className="text-sm font-bold text-white tracking-tight">
+                            {cat.nombre}
+                          </h3>
+                          <p className="text-[11px] text-zinc-400 mt-0.5">
+                            {isDupla
+                              ? 'Competirás en equipo de 2 atletas (compartirán equipo_id).'
+                              : 'Registro individual con clasificación propia.'}
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="px-4 py-3.5 rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-bold text-xs transition-colors cursor-pointer"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleContinuarDesdePaso2}
+                  disabled={loading || !categoriaSeleccionada}
+                  className="flex-1 py-4 rounded-2xl bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold text-sm shadow-xl shadow-[#02D7E5]/25 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-black" />
+                      <span>Registrando Atleta...</span>
+                    </>
+                  ) : categoriaSeleccionada?.tipo === 'dupla' ? (
+                    <>
+                      <span>Continuar a Datos de Compañero</span>
+                      <ArrowRight className="w-4 h-4 text-black" />
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4 text-black" />
+                      <span>Completar Inscripción Individual</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* PASO 3: FORMULARIO OBLIGATORIO DE COMPAÑERO (DUPLAS)                       */}
+          {/* ========================================================================= */}
+          {step === 3 && categoriaSeleccionada && (
+            <motion.div
+              key="step3"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              transition={{ duration: 0.3 }}
+              className="rounded-3xl bg-zinc-950/85 backdrop-blur-xl border border-white/10 p-6 md:p-8 shadow-2xl space-y-6"
+            >
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">
+                  Paso 3 de 3 — Modalidad Dupla
+                </span>
+                <h1 className="text-2xl font-bold text-white tracking-tight">
+                  Datos de tu Compañero de Dupla
+                </h1>
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  Has seleccionado <strong>{categoriaSeleccionada.nombre}</strong>. Si tu compañero ya tiene cuenta se vinculará a tu equipo; de lo contrario se le enviará su preinscripción.
+                </p>
+              </div>
+
+              <form onSubmit={handleFinalizarPaso3} className="space-y-4">
+                {/* Email del Compañero */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 block">
+                    Correo del Compañero (Obligatorio)
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="email"
+                      required
+                      placeholder="companero@ejemplo.com"
+                      value={compEmail}
+                      onChange={e => setCompEmail(e.target.value)}
+                      className="w-full pl-11 pr-4 py-3 bg-zinc-900/90 border border-white/10 rounded-2xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
+                    />
+                  </div>
+                </div>
+
+                {/* Nombre Completo del Compañero */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 block">
+                    Nombre Completo del Compañero
+                  </label>
+                  <div className="relative">
+                    <User className="w-4 h-4 text-zinc-500 absolute left-4 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ej. Carlos Mendoza"
+                      value={compNombre}
+                      onChange={e => setCompNombre(e.target.value)}
+                      className="w-full pl-11 pr-4 py-3 bg-zinc-900/90 border border-white/10 rounded-2xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
+                    />
+                  </div>
+                </div>
+
+                {/* Teléfono y Género del Compañero */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 block">
+                      Teléfono del Compañero
+                    </label>
+                    <div className="flex gap-2">
+                      <select
+                        value={compCountryCode}
+                        onChange={e => setCompCountryCode(e.target.value)}
+                        className="px-2.5 py-3 bg-zinc-900 border border-white/10 rounded-2xl text-xs font-bold text-white focus:outline-none"
+                      >
+                        <option value="+58">+58</option>
+                        <option value="+1">+1</option>
+                        <option value="+34">+34</option>
+                        <option value="+57">+57</option>
+                        <option value="+56">+56</option>
+                      </select>
+                      <input
+                        type="tel"
+                        required
+                        placeholder="4121234567"
+                        value={compPhoneRaw}
+                        onChange={e => setCompPhoneRaw(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                        className="flex-1 px-3.5 py-3 bg-zinc-900/90 border border-white/10 rounded-2xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 block">
+                      Género del Compañero
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setCompGenero('masculino')}
+                        className={`py-3 rounded-2xl text-xs font-bold border transition-all cursor-pointer ${
+                          compGenero === 'masculino'
+                            ? 'bg-[#02D7E5] text-black border-[#02D7E5]'
+                            : 'bg-zinc-900 text-zinc-400 hover:text-white border-white/10'
+                        }`}
+                      >
+                        Masculino
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCompGenero('femenino')}
+                        className={`py-3 rounded-2xl text-xs font-bold border transition-all cursor-pointer ${
+                          compGenero === 'femenino'
+                            ? 'bg-[#02D7E5] text-black border-[#02D7E5]'
+                            : 'bg-zinc-900 text-zinc-400 hover:text-white border-white/10'
+                        }`}
+                      >
+                        Femenino
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 leading-relaxed">
+                  <strong>Regla de Duplas:</strong> Cada atleta solo puede pertenecer a un equipo por competición. El sistema validará que tu compañero no esté ya inscrito en otra dupla.
+                </div>
+
+                <div className="flex items-center gap-3 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setStep(2)}
+                    disabled={loading}
+                    className="px-4 py-3.5 rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-bold text-xs transition-colors cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
 
                   <button
                     type="submit"
-                    disabled={loading || !isPasswordValid || password !== confirmPassword || !aceptoTerminos}
-                    className="w-full flex items-center justify-center gap-2 py-4 font-bold text-black bg-[#02D7E5] hover:bg-[#02D7E5]/90 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_20px_rgba(2,215,229,0.2)] mt-4"
+                    disabled={loading}
+                    className="flex-1 py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-[#02D7E5] hover:from-amber-400 hover:to-[#02D7E5]/90 text-black font-extrabold text-sm shadow-xl shadow-[#02D7E5]/25 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                   >
                     {loading ? (
-                      <><Loader2 className="w-5 h-5 animate-spin" /> Activando Cuenta...</>
-                    ) : 'Activar Cuenta y Entrar'}
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-black" />
+                        <span>Validando Dupla e Inscribiendo...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Users className="w-4 h-4 text-black" />
+                        <span>Finalizar Inscripción de Dupla</span>
+                      </>
+                    )}
                   </button>
-                </form>
-              )}
-
-            </div>
+                </div>
+              </form>
+            </motion.div>
           )}
-
-        </div>
+        </AnimatePresence>
       </div>
-    </div>
+
+      {/* Footer */}
+      <footer className="relative z-10 max-w-2xl mx-auto w-full pt-6 text-center text-xs text-zinc-600 border-t border-white/5">
+        Hyrox Fitness Factory © {new Date().getFullYear()} — Plataforma Oficial de Competición
+      </footer>
+    </main>
   )
 }

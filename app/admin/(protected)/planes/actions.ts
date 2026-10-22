@@ -178,3 +178,63 @@ export async function crearSuscripcionYOrden(payload: {
     return { success: false, error: error.message }
   }
 }
+
+export async function obtenerSedesParaSelect() {
+  const supabase = await createClient()
+  try {
+    const { data, error } = await supabase.from('sedes').select('id, nombre').order('nombre')
+    if (error) throw error
+    return { success: true, data }
+  } catch (err: any) {
+    return { success: false, error: err.message, data: [] }
+  }
+}
+
+export async function upsertPlan(payload: {
+  id?: string
+  nombre: string
+  descripcion?: string
+  precio_usd: number
+  estado: string
+  sedes: string[]
+  tipo: 'TIEMPO' | 'SESIONES'
+  sesiones_total: number | null
+}) {
+  const supabase = await createClient()
+  try {
+    if (payload.id) {
+      const { error } = await supabase
+        .from('planes')
+        .update({
+          nombre: payload.nombre,
+          descripcion: payload.descripcion,
+          precio_usd: payload.precio_usd,
+          estado: payload.estado,
+          sedes: payload.sedes,
+          tipo: payload.tipo,
+          sesiones_total: payload.sesiones_total,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', payload.id)
+      if (error) throw error
+    } else {
+      const { error } = await supabase
+        .from('planes')
+        .insert({
+          nombre: payload.nombre,
+          descripcion: payload.descripcion,
+          precio_usd: payload.precio_usd,
+          estado: payload.estado,
+          sedes: payload.sedes,
+          tipo: payload.tipo,
+          sesiones_total: payload.sesiones_total
+        })
+      if (error) throw error
+    }
+    return { success: true }
+  } catch (err: any) {
+    console.error('Error upsertPlan:', err)
+    return { success: false, error: err.message }
+  }
+}
+

@@ -2,10 +2,10 @@
 
 import { createClient } from '@/src/utils/supabase/server'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
-import { cookies } from 'next/headers'
 import { generarIdentidadFantasma } from '@/src/utils/authHelpers'
 
-
+// Almacenamiento seguro temporal de OTPs en caso de que la tabla public.otps aún no esté migrada
+const inMemoryOtps = new Map<string, { codigo: string; expiresAt: Date }>();
 
 export async function evaluarCedulaRegistro(cedula: string) {
   const supabaseAdmin = createAdminClient(
@@ -20,12 +20,12 @@ export async function evaluarCedulaRegistro(cedula: string) {
 
     let query = supabaseAdmin
       .from('usuarios')
-      .select('id, cedula_rif, nombre_completo, email, telefono, rol, acepto_terminos, sede_id');
+      .select('id, cedula, nombres, email, telefono');
 
     if (cedulaConGuion !== cedulaNormalizada) {
-      query = query.or(`cedula_rif.eq.${cedulaNormalizada},cedula_rif.eq.${cedulaConGuion}`);
+      query = query.or(`cedula.eq.${cedulaNormalizada},cedula.eq.${cedulaConGuion}`);
     } else {
-      query = query.eq('cedula_rif', cedulaNormalizada);
+      query = query.eq('cedula', cedulaNormalizada);
     }
 
     const { data: usuarioExistente, error } = await query.limit(1).maybeSingle();
@@ -35,59 +35,20 @@ export async function evaluarCedulaRegistro(cedula: string) {
       return { success: false, error: 'Error consultando la base de datos' };
     }
 
-    // SI ES NUEVO (Flujo 1):
-    if (!usuarioExistente) {
-      return {
-        success: true,
-        estado: 'NUEVO' as const
-      };
-    }
-
-    // SI YA ESTÁ REGISTRADO Y ACTIVO:
-    if (usuarioExistente.acepto_terminos === true) {
+    if (usuarioExistente) {
       return {
         success: true,
         estado: 'COMPLETO' as const,
         usuario: usuarioExistente,
-        message: 'Esta cédula ya está registrada y activa.'
+        message: 'Esta cédula ya se encuentra registrada en el sistema.'
       };
     }
 
-    // SI ES PRE-REGISTRADO / ESCALONADO (Flujo 2):
-    const userPhone = usuarioExistente.telefono;
-    if (!userPhone) {
-      return {
-        success: true,
-        estado: 'NUEVO' as const
-      };
-    }
-
-    // Disparar envío automático de OTP al teléfono recuperado
-    const otpRes = await enviarOtp(userPhone);
-    if (!otpRes.success) {
-      return {
-        success: false,
-        error: otpRes.error || 'Error al enviar código de verificación.'
-      };
-    }
-
-    // Extraer últimos 4 dígitos
-    const cleanDigits = userPhone.replace(/\D/g, '');
-    const last4 = cleanDigits.slice(-4);
-
+    // 2. Desacoplamiento de Cupos (Fase H14):
+    // Para este MVP, el evento no tiene límite de cupos numérico.
     return {
       success: true,
-      estado: 'ESCALONADO' as const,
-      telefono: userPhone,
-      ultimosCuatroDigitos: last4,
-      usuario: {
-        id: usuarioExistente.id,
-        nombre_completo: usuarioExistente.nombre_completo,
-        cedula_rif: usuarioExistente.cedula_rif,
-        email: usuarioExistente.email,
-        sede_id: usuarioExistente.sede_id
-      },
-      message: 'Código de seguridad enviado a tu WhatsApp'
+      estado: 'NUEVO' as const
     };
   } catch (err: any) {
     console.error('[evaluarCedulaRegistro] Catch error:', err);
@@ -108,12 +69,12 @@ export async function verificarCedula(cedula: string) {
 
     let query = supabaseAdmin
       .from('usuarios')
-      .select('id, cedula_rif, nombre_completo, telefono, migracion_pendiente');
+      .select('id, cedula, nombres, telefono');
 
     if (cedulaConGuion !== cedulaNormalizada) {
-      query = query.or(`cedula_rif.eq.${cedulaNormalizada},cedula_rif.eq.${cedulaConGuion}`);
+      query = query.or(`cedula.eq.${cedulaNormalizada},cedula.eq.${cedulaConGuion}`);
     } else {
-      query = query.eq('cedula_rif', cedulaNormalizada);
+      query = query.eq('cedula', cedulaNormalizada);
     }
 
     const { data, error } = await query.limit(1).maybeSingle()
@@ -122,108 +83,120 @@ export async function verificarCedula(cedula: string) {
       return { success: false, action: 'REGISTER' }
     }
 
-    if (data.migracion_pendiente) {
-      return { success: true, action: 'MIGRATION', user: data }
-    }
-
     return { success: true, action: 'LOGIN', user: data }
   } catch (err: any) {
     return { success: false, error: err.message }
   }
 }
 
-export async function obtenerSedesPublicas() {
-  const supabaseAdmin = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  )
-
-  try {
-    const { data, error } = await supabaseAdmin
-      .from('sedes')
-      .select('id, nombre, codigo_slug')
-      .order('nombre')
-      
-    if (error) throw error
-    return { success: true, data }
-  } catch (err: any) {
-    console.error('[obtenerSedesPublicas] Error:', err)
-    return { success: false, error: err.message }
-  }
-}
-
-export async function iniciarSesionUsuario(cedula: string, password: string) {
+export async function iniciarSesionUsuario(
+  identificador: string, 
+  password: string, 
+  portal: 'atleta' | 'admin' = 'atleta'
+) {
   const supabase = await createClient()
   const supabaseAdmin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 
-  // 1. Normalización de Cédula
-  const cedulaNormalizada = cedula.replace(/[\s\-\.]/g, '').toUpperCase();
-  console.log('[DEBUG LOGIN] Cédula normalizada:', cedulaNormalizada)
-
-  // Soportar coincidencia con y sin guión (ej. V16161616 y V-16161616)
-  const matchLetra = cedulaNormalizada.match(/^([VEJGP])(\d+)$/);
-  const cedulaConGuion = matchLetra ? `${matchLetra[1]}-${matchLetra[2]}` : cedulaNormalizada;
+  const idTrim = identificador.trim()
+  const esEmail = idTrim.includes('@')
 
   let query = supabaseAdmin
     .from('usuarios')
-    .select('id, email, rol, acepto_terminos, cedula_rif');
+    .select('id, email, rol, cedula, nombres')
 
-  if (cedulaConGuion !== cedulaNormalizada) {
-    query = query.or(`cedula_rif.eq.${cedulaNormalizada},cedula_rif.eq.${cedulaConGuion}`);
+  if (esEmail) {
+    query = query.ilike('email', idTrim)
   } else {
-    query = query.eq('cedula_rif', cedulaNormalizada);
-  }
+    // Normalización de Cédula
+    const cedulaNormalizada = idTrim.replace(/[\s\-\.]/g, '').toUpperCase()
+    const matchLetra = cedulaNormalizada.match(/^([VEJGP])(\d+)$/)
+    const cedulaConGuion = matchLetra ? `${matchLetra[1]}-${matchLetra[2]}` : cedulaNormalizada
 
-  // 2. Consulta con Bypass de RLS (Supabase Admin)
-  const { data, error } = await query.limit(1).maybeSingle();
-
-  console.log('[DEBUG LOGIN] Resultado BD:', data, error)
-
-  if (error || !data) {
-    return { success: false, error: error ? `Error BD: ${error.message}` : 'Cédula no encontrada en el sistema public.usuarios.' }
-  }
-
-  // Si detectas que el usuario existe pero tiene acepto_terminos === false, no lo redirijas. Retorna error directo:
-  if (data.acepto_terminos === false) {
-    return {
-      success: false,
-      error: 'Tu cuenta aún no está activada. Por favor, ve a la sección de Registro para completarla.'
+    if (cedulaConGuion !== cedulaNormalizada) {
+      query = query.or(`cedula.eq.${cedulaNormalizada},cedula.eq.${cedulaConGuion}`)
+    } else {
+      query = query.eq('cedula', cedulaNormalizada)
     }
   }
 
-  // Resolver email para login (si en public.usuarios es null, buscar en auth.users o fallback a fantasma)
-  let emailUsuario = data.email;
-  if (!emailUsuario) {
-    if (data.id) {
-      const { data: authUserData } = await supabaseAdmin.auth.admin.getUserById(data.id);
+  // 1. Consulta de usuario en public.usuarios
+  const { data: usuario, error } = await query.limit(1).maybeSingle()
+
+  if (error || !usuario) {
+    if (portal === 'admin') {
+      return { success: false, error: 'Credenciales inválidas o no tienes permisos de administrador' }
+    }
+    return { success: false, error: 'Credenciales inválidas. Usuario no encontrado.' }
+  }
+
+  const rol = (usuario.rol || '').toLowerCase().trim()
+
+  // 2. Validación de Portal Admin: Si proviene de /admin/login, rol debe ser 'admin'
+  if (portal === 'admin' && rol !== 'admin') {
+    return { 
+      success: false, 
+      error: 'Credenciales inválidas o no tienes permisos de administrador' 
+    }
+  }
+
+  // 3. Resolver email para Supabase Auth
+  let emailParaAuth = usuario.email
+  if (!emailParaAuth) {
+    if (usuario.id) {
+      const { data: authUserData } = await supabaseAdmin.auth.admin.getUserById(usuario.id)
       if (authUserData?.user?.email) {
-        emailUsuario = authUserData.user.email;
+        emailParaAuth = authUserData.user.email
       }
     }
-    if (!emailUsuario) {
-      emailUsuario = `${cedulaNormalizada}@fitnessfactory.local`;
+    if (!emailParaAuth && usuario.cedula) {
+      const cedLimpia = usuario.cedula.replace(/[\s\-\.]/g, '').toUpperCase()
+      emailParaAuth = `${cedLimpia}@hyrox.local`
     }
   }
 
-  // 3. Iniciar sesión usando el email
-  console.log(`[DEBUG LOGIN] Paso 2 - Intentando signInWithPassword con email: ${emailUsuario}`)
-  const { error: signInError } = await supabase.auth.signInWithPassword({
-    email: emailUsuario,
+  if (!emailParaAuth) {
+    return { success: false, error: 'No se pudo resolver la cuenta de acceso.' }
+  }
+
+  // 4. Iniciar sesión usando Supabase Auth (establece cookies de sesión)
+  const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
+    email: emailParaAuth,
     password
   })
 
-  console.log('[DEBUG LOGIN] Resultado de signInWithPassword:', signInError ? signInError : 'ÉXITO (No error)')
-
-  if (signInError) {
-    return { success: false, error: `Auth Error: ${signInError.message} (${signInError.code || 'sin_codigo'})` }
+  if (signInError || !authData.user) {
+    if (portal === 'admin') {
+      return { success: false, error: 'Credenciales inválidas o no tienes permisos de administrador' }
+    }
+    return { success: false, error: 'Credenciales inválidas. Contraseña incorrecta.' }
   }
 
-  // Redirigir directamente a /dashboard
-  console.log('[DEBUG LOGIN] Paso 3 - Redirigiendo a /dashboard')
-  return { success: true, redirect: '/dashboard' }
+  // 5. Verificación de rol en el servidor tras autenticación
+  const { data: usuarioAuth } = await supabaseAdmin
+    .from('usuarios')
+    .select('rol')
+    .eq('id', authData.user.id)
+    .maybeSingle()
+
+  const rolFinal = (usuarioAuth?.rol || rol).toLowerCase().trim()
+
+  if (portal === 'admin' && rolFinal !== 'admin') {
+    await supabase.auth.signOut()
+    return { success: false, error: 'Credenciales inválidas o no tienes permisos de administrador' }
+  }
+
+  // 6. Redirección Condicional según el rol
+  const redirectUrl = rolFinal === 'admin' ? '/admin/dashboard' : '/dashboard'
+
+  return { 
+    success: true, 
+    rol: rolFinal,
+    redirect: redirectUrl,
+    redirectUrl 
+  }
 }
 
 export async function enviarOtp(telefono: string) {
@@ -241,81 +214,86 @@ export async function enviarOtp(telefono: string) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // --- ANTI-SPAM (LÍMITES) ---
-  const limite24h = new Date();
-  limite24h.setHours(limite24h.getHours() - 24);
+  // Intentar almacenar en public.otps si la tabla existe
+  try {
+    // Límites básicos
+    const limite24h = new Date();
+    limite24h.setHours(limite24h.getHours() - 24);
 
-  const { data: otpsPrevios, error: fetchErr } = await supabaseAdmin
-    .from('otps')
-    .select('created_at')
-    .eq('telefono', tel)
-    .gte('created_at', limite24h.toISOString())
-    .order('created_at', { ascending: false });
+    const { data: otpsPrevios, error: fetchErr } = await supabaseAdmin
+      .from('otps')
+      .select('created_at')
+      .eq('telefono', tel)
+      .gte('created_at', limite24h.toISOString())
+      .order('created_at', { ascending: false });
 
-  if (!fetchErr && otpsPrevios) {
-    if (otpsPrevios.length > 0) {
-      const lastOtpTime = new Date(otpsPrevios[0].created_at).getTime();
-      const nowTime = new Date().getTime();
-      if (nowTime - lastOtpTime < 60000) {
-        return { success: false, error: 'Espera 60 segundos antes de pedir otro código' };
+    if (!fetchErr && otpsPrevios) {
+      if (otpsPrevios.length > 0) {
+        const lastOtpTime = new Date(otpsPrevios[0].created_at).getTime();
+        const nowTime = new Date().getTime();
+        if (nowTime - lastOtpTime < 60000) {
+          return { success: false, error: 'Espera 60 segundos antes de pedir otro código' };
+        }
+      }
+      if (otpsPrevios.length >= 3) {
+        return { success: false, error: 'Has excedido el límite de solicitudes (Max 3/24h)' };
       }
     }
-    if (otpsPrevios.length >= 3) {
-      return { success: false, error: 'Has excedido el límite de solicitudes (Max 3/24h)' };
+
+    await supabaseAdmin.from('otps').delete().eq('telefono', tel);
+    const { error: insertError } = await supabaseAdmin
+      .from('otps')
+      .insert({ telefono: tel, codigo, expires_at: expiresAt.toISOString() });
+
+    if (insertError) {
+      console.warn('[OTP Send] Tabla public.otps no disponible en la BD, usando almacenamiento temporal:', insertError.message);
+      inMemoryOtps.set(tel, { codigo, expiresAt });
     }
-  }
-
-  // --- INVALIDACIÓN ---
-  await supabaseAdmin.from('otps').delete().eq('telefono', tel);
-
-  // Guardar en la base de datos
-  const { error: insertError } = await supabaseAdmin
-    .from('otps')
-    .insert({ telefono: tel, codigo, expires_at: expiresAt.toISOString() });
-
-  if (insertError) {
-    console.error('[OTP Send] Error guardando código:', insertError);
-    return { success: false, error: 'Error generando código de validación' };
+  } catch (err: any) {
+    console.warn('[OTP Send] Catch error en Supabase OTP, usando almacenamiento temporal:', err.message);
+    inMemoryOtps.set(tel, { codigo, expiresAt });
   }
 
   // Enviar código vía Callbell (WhatsApp)
   const otpString = String(codigo);
   const callbellUrl = 'https://api.callbell.eu/v1/messages/send';
   
-  const callbellPayload = {
-    to: tel,
-    from: "whatsapp",
-    type: "text",
-    channel_uuid: process.env.CALLBELL_CHANNEL_UUID,
-    content: { text: `Tu código de verificación es ${otpString}` },
-    template_uuid: process.env.CALLBELL_OTP_TEMPLATE_UUID,
-    template_values: [otpString],
-    optin_contact: true
-  };
+  if (process.env.CALLBELL_API_TOKEN && process.env.CALLBELL_CHANNEL_UUID) {
+    const callbellPayload = {
+      to: tel,
+      from: "whatsapp",
+      type: "text",
+      channel_uuid: process.env.CALLBELL_CHANNEL_UUID,
+      content: { text: `Tu código de verificación Hyrox es ${otpString}` },
+      template_uuid: process.env.CALLBELL_OTP_TEMPLATE_UUID,
+      template_values: [otpString],
+      optin_contact: true
+    };
 
-  try {
-    const callbellResponse = await fetch(callbellUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.CALLBELL_API_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(callbellPayload)
-    });
+    try {
+      const callbellResponse = await fetch(callbellUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.CALLBELL_API_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(callbellPayload)
+      });
 
-    if (!callbellResponse.ok) {
-      console.error('[OTP Send] Error en Callbell:', await callbellResponse.text());
-      return { success: false, error: 'Error despachando mensaje a WhatsApp' };
+      if (!callbellResponse.ok) {
+        console.error('[OTP Send] Error en Callbell:', await callbellResponse.text());
+      }
+    } catch (err) {
+      console.error('[OTP Send] Error conectando a Callbell:', err);
     }
-  } catch (err) {
-    console.error('[OTP Send] Error conectando a Callbell:', err);
-    return { success: false, error: 'Error despachando mensaje a WhatsApp' };
+  } else {
+    console.log(`[OTP Local/Dev] Código generado para ${tel}: ${otpString}`);
   }
 
   return { success: true, message: 'Código enviado correctamente' }
 }
 
-export async function validarOtp(telefono: string, codigo: string, datosExtra?: any) {
+export async function validarOtp(telefono: string, codigo: string) {
   let tel = telefono.replace(/\s+/g, '');
   if (!tel.startsWith('+')) {
     tel = '+' + tel;
@@ -326,133 +304,60 @@ export async function validarOtp(telefono: string, codigo: string, datosExtra?: 
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  const { data: otps, error } = await supabaseAdmin
-    .from('otps')
-    .select('id, expires_at')
-    .eq('telefono', tel)
-    .eq('codigo', codigo)
-    .order('created_at', { ascending: false })
-    .limit(1);
-
-  if (error || !otps || otps.length === 0) {
-    return { success: false, error: 'Código incorrecto.' };
-  }
-
-  const otpData = otps[0];
-  const now = new Date();
-  const expiresAt = new Date(otpData.expires_at);
-
-  if (now > expiresAt) {
-    return { success: false, error: 'El código ha expirado.' };
-  }
-
-  // Consumir el código
-  await supabaseAdmin.from('otps').delete().eq('id', otpData.id);
-
+  // 1. Intentar validar en tabla public.otps
   try {
-    // Si viene de Recepción (Walk-in / Clase de prueba)
-    if (datosExtra?.isLead) {
-      console.log('[validarOtp] Validación exitosa para Lead (RecepcionPanel).')
-      return { success: true }
+    const { data: otps, error } = await supabaseAdmin
+      .from('otps')
+      .select('id, expires_at')
+      .eq('telefono', tel)
+      .eq('codigo', codigo)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (!error && otps && otps.length > 0) {
+      const otpData = otps[0];
+      const now = new Date();
+      const expiresAt = new Date(otpData.expires_at);
+
+      if (now > expiresAt) {
+        return { success: false, error: 'El código ha expirado.' };
+      }
+
+      await supabaseAdmin.from('otps').delete().eq('id', otpData.id);
+      return { success: true, estado: 'NUEVO' as const };
     }
-
-    // Intercepción Smart Onboarding para Registro
-    if (datosExtra?.isRegister || datosExtra?.cedula) {
-      const cedulaRaw = datosExtra.cedula || '';
-      const cedulaNormalizada = cedulaRaw.replace(/[\s\-\.]/g, '').toUpperCase();
-      const matchLetra = cedulaNormalizada.match(/^([VEJGP])(\d+)$/);
-      const cedulaConGuion = matchLetra ? `${matchLetra[1]}-${matchLetra[2]}` : cedulaNormalizada;
-
-      let query = supabaseAdmin
-        .from('usuarios')
-        .select('id, cedula_rif, nombre_completo, email, telefono, rol, acepto_terminos, sede_id');
-
-      if (cedulaConGuion !== cedulaNormalizada) {
-        query = query.or(`cedula_rif.eq.${cedulaNormalizada},cedula_rif.eq.${cedulaConGuion}`);
-      } else {
-        query = query.eq('cedula_rif', cedulaNormalizada);
-      }
-
-      const { data: usuarioExistente } = await query.limit(1).maybeSingle();
-
-      if (!usuarioExistente) {
-        return {
-          success: true,
-          estado: 'NUEVO' as const,
-          message: 'Usuario nuevo.'
-        };
-      }
-
-      if (usuarioExistente.acepto_terminos === true) {
-        return {
-          success: true,
-          estado: 'COMPLETO' as const,
-          usuario: usuarioExistente,
-          message: 'Esta cédula ya está registrada y activa.'
-        };
-      }
-
-      // Si existe y acepto_terminos === false
-      return {
-        success: true,
-        estado: 'ESCALONADO' as const,
-        usuario: {
-          id: usuarioExistente.id,
-          nombre_completo: usuarioExistente.nombre_completo,
-          cedula_rif: usuarioExistente.cedula_rif,
-          email: usuarioExistente.email,
-          sede_id: usuarioExistente.sede_id
-        },
-        message: 'Pre-registro en recepción detectado.'
-      };
-    }
-
-    // Flujo de migración (fallback)
-    if (datosExtra?.isMigration) {
-      const user = datosExtra.user;
-      const { emailFicticio, claveFicticia } = generarIdentidadFantasma(user.cedula_rif || user.id);
-      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-        email: emailFicticio,
-        password: claveFicticia,
-        email_confirm: true,
-        user_metadata: {
-          name: user.nombre_completo,
-          role: 'ATLETA'
-        }
-      });
-      if (authError || !authData.user) {
-        throw new Error('Error al crear credenciales de migración en Supabase Auth.');
-      }
-      await supabaseAdmin
-        .from('usuarios')
-        .update({
-          telefono: tel,
-          migracion_pendiente: false,
-          email: emailFicticio,
-          acepto_terminos: false
-        })
-        .eq('id', user.id);
-      return { success: true, dummyEmail: emailFicticio, dummyPassword: claveFicticia };
-    }
-
-    return { success: true };
   } catch (err: any) {
-    console.error('[validarOtp] Excepción capturada:', err.message)
-    return { success: false, error: err.message }
+    console.warn('[validarOtp] Error consultando tabla public.otps:', err.message);
   }
+
+  // 2. Fallback a almacenamiento en memoria
+  const memOtp = inMemoryOtps.get(tel);
+  if (memOtp && memOtp.codigo === codigo) {
+    if (new Date() > memOtp.expiresAt) {
+      inMemoryOtps.delete(tel);
+      return { success: false, error: 'El código ha expirado.' };
+    }
+    inMemoryOtps.delete(tel);
+    return { success: true, estado: 'NUEVO' as const };
+  }
+
+  return { success: false, error: 'Código incorrecto.' };
 }
 
 export async function completarRegistroUsuario(payload: {
-  estado: 'NUEVO' | 'ESCALONADO'
   cedula: string
   telefono: string
   password: string
   nombre?: string
   apellido?: string
-  sedeId?: string
-  usuarioId?: string
-  fechaNacimiento?: string
-  genero?: string
+  email?: string
+  tallaFranela: string
+  tiempos: {
+    test1: number
+    test2: number
+    test3: number
+    test4: number
+  } | Array<{ numero_test: number; tiempo_segundos: number }>
 }) {
   const supabaseAdmin = createAdminClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -462,163 +367,88 @@ export async function completarRegistroUsuario(payload: {
   const cedulaNormalizada = payload.cedula.replace(/[\s\-\.]/g, '').toUpperCase();
 
   try {
-    if (payload.estado === 'ESCALONADO') {
-      // 1. Localizar usuario existente en public.usuarios
-      let usuario = null;
-      if (payload.usuarioId) {
-        const { data } = await supabaseAdmin
-          .from('usuarios')
-          .select('id, cedula_rif, email, nombre_completo')
-          .eq('id', payload.usuarioId)
-          .single();
-        usuario = data;
+    const nombreCompleto = `${payload.nombre?.trim() || ''} ${payload.apellido?.trim() || ''}`.trim();
+    const emailUsuario = payload.email?.trim() || `${cedulaNormalizada}@hyrox.local`;
+
+    // 1. Crear en auth.users con la contraseña proporcionada por el atleta
+    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+      email: emailUsuario,
+      password: payload.password,
+      email_confirm: true,
+      user_metadata: {
+        name: nombreCompleto
       }
+    });
 
-      if (!usuario) {
-        const matchLetra = cedulaNormalizada.match(/^([VEJGP])(\d+)$/);
-        const cedulaConGuion = matchLetra ? `${matchLetra[1]}-${matchLetra[2]}` : cedulaNormalizada;
-        const { data } = await supabaseAdmin
-          .from('usuarios')
-          .select('id, cedula_rif, email, nombre_completo')
-          .or(`cedula_rif.eq.${cedulaNormalizada},cedula_rif.eq.${cedulaConGuion}`)
-          .maybeSingle();
-        usuario = data;
-      }
-
-      if (!usuario) {
-        return { success: false, error: 'No se encontró el registro del atleta para activar.' };
-      }
-
-      // 2. CRÍTICO: NO usar auth.admin.createUser. Inyectar contraseña en auth.users existente:
-      const { error: authUpdateErr } = await supabaseAdmin.auth.admin.updateUserById(usuario.id, {
-        password: payload.password
-      });
-
-      if (authUpdateErr) {
-        console.error('[completarRegistroUsuario] Error actualizando contraseña en Auth:', authUpdateErr);
-        return { success: false, error: 'Error al establecer contraseña: ' + authUpdateErr.message };
-      }
-
-      // Determinar email para login
-      let emailUsuario = usuario.email;
-      if (!emailUsuario) {
-        const { data: authData } = await supabaseAdmin.auth.admin.getUserById(usuario.id);
-        emailUsuario = authData?.user?.email || `${cedulaNormalizada}@fitnessfactory.local`;
-      }
-
-      // 3. UPDATE en public.usuarios seteando acepto_terminos = true
-      const { error: updateErr } = await supabaseAdmin
-        .from('usuarios')
-        .update({
-          acepto_terminos: true,
-          email: emailUsuario,
-          migracion_pendiente: false
-        })
-        .eq('id', usuario.id);
-
-      if (updateErr) {
-        console.error('[completarRegistroUsuario] Error actualizando public.usuarios:', updateErr);
-        return { success: false, error: 'Error activando la cuenta: ' + updateErr.message };
-      }
-
-      return { success: true, email: emailUsuario, password: payload.password };
-
-    } else {
-      // NUEVO (Flujo 1)
-      const nombreCompleto = `${payload.nombre?.trim() || ''} ${payload.apellido?.trim() || ''}`.trim();
-      const { emailFicticio } = generarIdentidadFantasma(cedulaNormalizada);
-
-      // 1. Crear en auth.users con la contraseña proporcionada por el usuario
-      const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-        email: emailFicticio,
-        password: payload.password,
-        email_confirm: true,
-        user_metadata: {
-          name: nombreCompleto,
-          role: 'ATLETA'
-        }
-      });
-
-      if (authError || !authData.user) {
-        console.error('[completarRegistroUsuario] Error auth.users (NUEVO):', authError);
-        return { success: false, error: 'Error al crear credenciales de acceso: ' + authError?.message };
-      }
-
-      const newUserId = authData.user.id;
-
-      // 2. Insertar en public.usuarios con acepto_terminos: true
-      const { error: insertErr } = await supabaseAdmin
-        .from('usuarios')
-        .upsert({
-          id: newUserId,
-          cedula_rif: cedulaNormalizada,
-          nombre_completo: nombreCompleto,
-          telefono: payload.telefono,
-          rol: 'ATLETA',
-          sede_id: payload.sedeId || null,
-          email: emailFicticio,
-          fecha_nacimiento: payload.fechaNacimiento || null,
-          genero: payload.genero || null,
-          acepto_terminos: true,
-          migracion_pendiente: false
-        });
-
-      if (insertErr) {
-        console.error('[completarRegistroUsuario] Error insertando public.usuarios (NUEVO):', insertErr);
-        await supabaseAdmin.auth.admin.deleteUser(newUserId);
-        return { success: false, error: 'Error al guardar los datos del usuario: ' + insertErr.message };
-      }
-
-      // 3. Asignación Automática de Clase de Prueba (Onboarding de Cortesía - Solo Flujo NUEVO)
-      try {
-        let planId: string | null = null;
-        const { data: planPrueba } = await supabaseAdmin
-          .from('planes')
-          .select('id')
-          .ilike('nombre', '%Clase de Prueba%')
-          .limit(1)
-          .maybeSingle();
-
-        if (planPrueba?.id) {
-          planId = planPrueba.id;
-        } else {
-          const { data: fallbackPlan } = await supabaseAdmin
-            .from('planes')
-            .select('id')
-            .eq('tipo', 'SESIONES')
-            .eq('sesiones_total', 1)
-            .limit(1)
-            .maybeSingle();
-          planId = fallbackPlan?.id || '31d7a0c9-715b-4800-8ad9-47ef8cead520';
-        }
-
-        if (planId) {
-          const fechaCorte = new Date();
-          fechaCorte.setDate(fechaCorte.getDate() + 15); // Vencimiento a 15 días
-
-          const { error: subErr } = await supabaseAdmin.from('suscripciones').insert({
-            usuario_id: newUserId,
-            plan_id: planId,
-            estado: 'ACTIVO',
-            sesiones_restantes: 1,
-            fecha_corte: fechaCorte.toISOString(),
-            metadata: {
-              origen: 'onboarding_registro',
-              tipo_cortesia: 'clase_de_prueba',
-              asignado_el: new Date().toISOString()
-            }
-          });
-
-          if (subErr) {
-            console.error('[completarRegistroUsuario] Error asignando suscripción de prueba:', subErr);
-          }
-        }
-      } catch (subException) {
-        console.error('[completarRegistroUsuario] Excepción al asignar clase de prueba:', subException);
-      }
-
-      return { success: true, email: emailFicticio, password: payload.password };
+    if (authError || !authData.user) {
+      console.error('[completarRegistroUsuario] Error auth.users:', authError);
+      return { success: false, error: 'Error al crear credenciales de acceso: ' + (authError?.message || '') };
     }
+
+    const newUserId = authData.user.id;
+
+    // 2. Inserción en public.usuarios: nombres, cedula, telefono, email, talla_franela
+    const { error: insertErr } = await supabaseAdmin
+      .from('usuarios')
+      .upsert({
+        id: newUserId,
+        nombres: nombreCompleto,
+        cedula: cedulaNormalizada,
+        telefono: payload.telefono,
+        email: emailUsuario,
+        talla_franela: payload.tallaFranela
+      });
+
+    if (insertErr) {
+      console.error('[completarRegistroUsuario] Error insertando public.usuarios:', insertErr);
+      await supabaseAdmin.auth.admin.deleteUser(newUserId);
+      return { success: false, error: 'Error al guardar los datos del usuario: ' + insertErr.message };
+    }
+
+    // 3. Inserción múltiple (bulk insert) en public.tiempos_historicos
+    let t1 = 0, t2 = 0, t3 = 0, t4 = 0;
+    if (Array.isArray(payload.tiempos)) {
+      t1 = payload.tiempos.find(t => t.numero_test === 1)?.tiempo_segundos || 0;
+      t2 = payload.tiempos.find(t => t.numero_test === 2)?.tiempo_segundos || 0;
+      t3 = payload.tiempos.find(t => t.numero_test === 3)?.tiempo_segundos || 0;
+      t4 = payload.tiempos.find(t => t.numero_test === 4)?.tiempo_segundos || 0;
+    } else if (payload.tiempos && typeof payload.tiempos === 'object') {
+      t1 = payload.tiempos.test1 || 0;
+      t2 = payload.tiempos.test2 || 0;
+      t3 = payload.tiempos.test3 || 0;
+      t4 = payload.tiempos.test4 || 0;
+    }
+
+    const tiemposInsertPayload = [
+      { id: crypto.randomUUID(), usuario_id: newUserId, numero_test: 1, tiempo_segundos: Math.round(t1) },
+      { id: crypto.randomUUID(), usuario_id: newUserId, numero_test: 2, tiempo_segundos: Math.round(t2) },
+      { id: crypto.randomUUID(), usuario_id: newUserId, numero_test: 3, tiempo_segundos: Math.round(t3) },
+      { id: crypto.randomUUID(), usuario_id: newUserId, numero_test: 4, tiempo_segundos: Math.round(t4) }
+    ];
+
+    const { error: tiemposErr } = await supabaseAdmin
+      .from('tiempos_historicos')
+      .insert(tiemposInsertPayload);
+
+    if (tiemposErr) {
+      console.error('[completarRegistroUsuario] Error insertando en tiempos_historicos:', tiemposErr);
+      // Rollback para evitar estado inconsistente
+      await supabaseAdmin.from('usuarios').delete().eq('id', newUserId);
+      await supabaseAdmin.auth.admin.deleteUser(newUserId);
+      return { success: false, error: 'Error al registrar los tiempos históricos: ' + tiemposErr.message };
+    }
+
+    // 4. Limpiar reserva temporal de cupo una vez consolidado el usuario
+    try {
+      await supabaseAdmin
+        .from('reservas_temporales')
+        .delete()
+        .eq('cedula', cedulaNormalizada);
+    } catch (cleanupErr) {
+      console.warn('[completarRegistroUsuario] Advertencia limpiando reserva_temporal:', cleanupErr);
+    }
+
+    return { success: true, email: emailUsuario, password: payload.password };
   } catch (err: any) {
     console.error('[completarRegistroUsuario] Excepción:', err);
     return { success: false, error: err.message || 'Error inesperado durante el registro.' };

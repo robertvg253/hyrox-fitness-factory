@@ -1,425 +1,416 @@
 import { createClient } from '@/src/utils/supabase/server'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { Bell, CalendarPlus, Dumbbell, CreditCard, TrendingUp, ArrowRight, User } from 'lucide-react'
+import {
+  Flame,
+  Timer,
+  User,
+  ArrowRight,
+  Activity,
+  Trophy,
+  ChevronRight,
+  Zap,
+  Clock
+} from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
+// Conversor de segundos a formato MM:SS
+function formatSegundosAMM_SS(totalSec: number | null | undefined): string {
+  if (totalSec === null || totalSec === undefined || totalSec <= 0) return '--:--'
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+}
+
 export default async function DashboardPage() {
   const supabase = await createClient()
 
-  const { data: { user } } = await supabase.auth.getUser()
+  // 1. Obtener usuario autenticado
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
 
   if (!user) {
     redirect('/login')
   }
 
-  // Query 1: Datos básicos del usuario — query separado para evitar fallos por joins
-  const { data: userData } = await supabase
+  // 2. Fetch perfil en public.usuarios (sin joins innecesarios)
+  const { data: usuario } = await supabase
     .from('usuarios')
-    .select('nombre_completo, rol, etiqueta_lead, cedula_rif, acepto_terminos, fecha_nacimiento, sede_id')
+    .select('id, nombres, cedula, rol')
     .eq('id', user.id)
-    .single()
-
-  // Query 2: Suscripción activa más reciente
-  const { data: suscripcionData } = await supabase
-    .from('suscripciones')
-    .select('id, estado, fecha_corte, sesiones_restantes, planes(tipo, nombre)')
-    .eq('usuario_id', user.id)
-    .order('created_at', { ascending: false })
-    .limit(1)
     .maybeSingle()
 
-  const suscripcionActiva = suscripcionData || null
-
-  // Query 3: Reservas CONFIRMADAS del usuario con datos de la clase
-  const now = new Date().toISOString()
-  const { data: reservasData, error: errRes } = await supabase
-    .from('reservas')
-    .select(`
-      id, 
-      clase_id, 
-      clases_programadas!inner(
-        fecha_hora_inicio, 
-        nombre_clase, 
-        disciplinas(nombre)
-      )
-    `)
+  // 3. Fetch tiempos históricos del atleta en public.tiempos_historicos (dinámico para N tests)
+  let { data: tiempos } = await supabase
+    .from('tiempos_historicos')
+    .select('*')
     .eq('usuario_id', user.id)
-    .eq('estado_reserva', 'CONFIRMADA')
-    .gte('clases_programadas.fecha_hora_inicio', now)
-    .order('fecha_hora_inicio', { foreignTable: 'clases_programadas', ascending: true })
-    .limit(1)
+    .order('numero_test', { ascending: true })
 
-  const proximaReserva = reservasData?.[0] || null
-  // Si Supabase devuelve un array para la relación a uno-a-muchos forzada, tomamos el primero
-  const rawClaseData = proximaReserva?.clases_programadas
-  const claseData = Array.isArray(rawClaseData) ? rawClaseData[0] : rawClaseData
-
-  // Formateo SEGURO de fecha — evitando hydration mismatch forzando timezone
-  const formattedDate = claseData?.fecha_hora_inicio
-    ? new Intl.DateTimeFormat('es-VE', {
-        weekday: 'long',
-        hour: 'numeric',
-        minute: 'numeric',
-        hour12: true,
-        timeZone: 'America/Caracas'
-      }).format(new Date(claseData.fecha_hora_inicio))
-    : ''
-
-  // Estado de suscripción
-  const estado = (suscripcionActiva?.estado || '').toUpperCase()
-  const fechaVencimientoBD = suscripcionActiva?.fecha_corte
-  let estaVencido = false
-  if (!estado || estado === 'VENCIDO') {
-    estaVencido = true
-  } else if (estado === 'ACTIVO' || estado === 'CLASE DE PRUEBA') {
-    if (!fechaVencimientoBD || new Date(fechaVencimientoBD) < new Date()) {
-      estaVencido = true
+  // Fallback con supabaseAdmin en caso de que las políticas RLS aún no hayan sido ejecutadas en Supabase
+  if (!tiempos || tiempos.length === 0) {
+    try {
+      const supabaseAdmin = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      )
+      const { data: tiemposAdmin } = await supabaseAdmin
+        .from('tiempos_historicos')
+        .select('*')
+        .eq('usuario_id', user.id)
+        .order('numero_test', { ascending: true })
+      if (tiemposAdmin && tiemposAdmin.length > 0) {
+        tiempos = tiemposAdmin
+      }
+    } catch (err) {
+      console.warn('[DashboardPage] Fallback admin error:', err)
     }
   }
 
-  // Sesiones disponibles y control de acceso (Planes de Tiempo son ilimitados)
-  const planesObj = Array.isArray(suscripcionActiva?.planes) ? suscripcionActiva.planes[0] : suscripcionActiva?.planes
-  const isIlimitado = (planesObj as any)?.tipo === 'TIEMPO'
-  const sesionesDisponibles = suscripcionActiva?.sesiones_restantes ?? 0
-  const sinSesiones = !isIlimitado && sesionesDisponibles <= 0
-  const userBookedProximaClase = !!proximaReserva
+  const testsList = tiempos || []
 
-  const esClasePrueba = planesObj?.nombre === 'Clase de Prueba'
-  const tienePlanPago = (estado === 'ACTIVO' || estado === 'CLASE DE PRUEBA') && !esClasePrueba;
-  
-  // FIXED SECURITY LOGIC:
-  const puedeAgendar = Boolean(
-    suscripcionActiva && 
-    (estado === 'ACTIVO' || estado === 'CLASE DE PRUEBA') && 
-    (isIlimitado || (suscripcionActiva.sesiones_restantes !== null && suscripcionActiva.sesiones_restantes > 0)) &&
-    !estaVencido
-  );
+  // Tiempos válidos estrictamente en base a los registros existentes (> 0)
+  const tiemposValidos = testsList
+    .map((t) => t.tiempo_segundos)
+    .filter((s): s is number => typeof s === 'number' && s > 0)
 
-  // Flujo Onboarding pendiente — validación de datos maestros, no de métricas de lead
-  if (!userData?.acepto_terminos || !userData?.fecha_nacimiento || !userData?.sede_id) {
-    const OnboardingWizard = (await import('@/components/dashboard/OnboardingWizard')).default
-    return <OnboardingWizard cedula={userData?.cedula_rif || ''} />
+  const sumaSegundos = tiemposValidos.reduce((acc, s) => acc + s, 0)
+  const promedioSegundos = tiemposValidos.length > 0 ? Math.round(sumaSegundos / tiemposValidos.length) : 0
+  const promedioFormateado = tiemposValidos.length > 0 ? formatSegundosAMM_SS(promedioSegundos) : '--:--'
+
+  // Cálculo de Mejor Marca (PR): el menor tiempo en segundos > 0 entre los tests existentes
+  const prSegundos = tiemposValidos.length > 0 ? Math.min(...tiemposValidos) : 0
+  const prFormateado = tiemposValidos.length > 0 ? formatSegundosAMM_SS(prSegundos) : '--:--'
+
+  // 4. Obtener simulación activa para conocer Heat Asignado y estado de la tabla
+  const { data: simulacionReciente } = await supabase
+    .from('simulaciones')
+    .select('id, nombre, estado, tabla_liberada, heats_liberados, fecha_creacion')
+    .order('fecha_creacion', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  let heatAsignado: string | null = null
+  if (simulacionReciente?.id) {
+    const { data: participacion } = await supabase
+      .from('participantes_simulacion')
+      .select('heat_asignado')
+      .eq('simulacion_id', simulacionReciente.id)
+      .eq('usuario_id', user.id)
+      .maybeSingle()
+    heatAsignado = participacion?.heat_asignado || null
   }
 
-  // Nombre: query separado garantiza que nunca mostremos la cédula
-  const firstName = userData?.nombre_completo
-    ? userData.nombre_completo.split(' ')[0]
-    : (user.user_metadata?.first_name || 'Atleta')
-
-  const disciplinaNombre = (() => {
-    if (!claseData) return 'Clase'
-    const disc = Array.isArray(claseData.disciplinas) ? claseData.disciplinas[0] : claseData.disciplinas
-    return disc?.nombre || claseData.nombre_clase || 'Clase'
-  })()
+  // Atributos del atleta
+  const primerNombre = usuario?.nombres ? usuario.nombres.trim().split(' ')[0] : 'Atleta'
+  const tablaLiberada = Boolean(simulacionReciente?.tabla_liberada)
+  const heatsLiberados = Boolean(simulacionReciente?.heats_liberados)
 
   return (
-    <main className="pb-6 space-y-8">
-      {/* Hero Section con Header Inmersivo */}
-      <section className="relative h-[320px] overflow-hidden flex flex-col justify-between p-6 animate-in fade-in slide-in-from-top-4 duration-700">
-        <div className="absolute inset-0 z-0">
-          <img 
-            src="https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=1470&auto=format&fit=crop" 
-            alt="Entrenamiento"
-            className="w-full h-full object-cover object-center"
-          />
-          {/* Gradientes oscuros para contraste (Arriba para Header, Abajo para Textos) */}
-          <div className="absolute inset-0 bg-gradient-to-b from-black/90 via-black/40 to-transparent z-10" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-transparent z-10" />
+    <main className="pb-12 px-4 pt-4 space-y-6 max-w-md mx-auto">
+      {/* 1. Header con Saludo */}
+      <header className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-[#02D7E5]/30 to-zinc-900 border border-[#02D7E5]/40 flex items-center justify-center shadow-lg shadow-[#02D7E5]/10 shrink-0">
+            <User className="w-6 h-6 text-[#02D7E5]" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-[10px] font-bold tracking-widest text-[#02D7E5] uppercase">
+              Panel de Atleta
+            </span>
+            <h1 className="text-xl font-bold text-white tracking-tight">
+              ¡Hola, {primerNombre}! 👋
+            </h1>
+          </div>
         </div>
-        
-        {/* Header (Superpuesto) */}
-        <header className="relative z-20 flex items-center justify-start w-full">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full overflow-hidden bg-zinc-900 border border-zinc-700 flex items-center justify-center shrink-0">
-              <User className="w-5 h-5 text-zinc-400" />
-            </div>
-            <div className="flex flex-col">
-              <p className="text-[10px] font-bold text-zinc-300 shadow-black drop-shadow-md uppercase tracking-wider">Bienvenido,</p>
-              <h1 className="text-lg font-bold text-white tracking-tight capitalize shadow-black drop-shadow-md">{firstName}</h1>
+
+        <Link
+          href="/dashboard/perfil"
+          className="p-2.5 rounded-2xl bg-zinc-900/80 border border-zinc-800 text-zinc-400 hover:text-white transition-colors"
+          title="Ver perfil"
+        >
+          <ChevronRight className="w-5 h-5" />
+        </Link>
+      </header>
+
+      {/* 2. CTA Dinámico de Ranking Global (ÚLTIMA HORA con efecto Titilante/Glow) */}
+      {tablaLiberada && simulacionReciente && (
+        <section className="animate-in fade-in slide-in-from-top-3 duration-500">
+          <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-cyan-950/80 via-zinc-950 to-amber-950/60 border border-[#02D7E5]/70 p-5 shadow-[0_0_30px_rgba(2,215,229,0.25)]">
+            {/* Resplandor titilante / glow */}
+            <div className="absolute inset-0 bg-[#02D7E5]/5 animate-pulse pointer-events-none" />
+            <div className="absolute -top-12 -right-12 w-36 h-36 bg-[#02D7E5]/20 rounded-full blur-2xl pointer-events-none" />
+
+            <div className="relative z-10 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold bg-[#02D7E5]/20 text-[#02D7E5] border border-[#02D7E5]/40">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#02D7E5] opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-[#02D7E5]"></span>
+                  </span>
+                  ¡ÚLTIMA HORA! • RESULTADOS
+                </span>
+                <Trophy className="w-5 h-5 text-[#02D7E5]" />
+              </div>
+
+              <div>
+                <h2 className="text-lg font-bold text-white tracking-tight">
+                  ¡Tabla de Posiciones Oficial Disponible!
+                </h2>
+                <p className="text-xs text-zinc-300 leading-relaxed font-medium mt-1">
+                  La clasificación final y tiempos oficiales de &quot;{simulacionReciente.nombre}&quot; ya están liberados. Consulta tu posición y los resultados por heat.
+                </p>
+              </div>
+
+              {/* Botón llamativo hacia /dashboard/competicion */}
+              <Link
+                href="/dashboard/competicion"
+                className="w-full py-3 px-4 bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold text-sm rounded-2xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.4)] flex items-center justify-center gap-2 active:scale-[0.98]"
+              >
+                <Trophy className="w-4 h-4 text-black" />
+                <span>Ver Clasificación en Competición</span>
+                <ArrowRight className="w-4 h-4 text-black" />
+              </Link>
             </div>
           </div>
-        </header>
-        
-        {/* Banner Content */}
-        <div className="relative z-20 flex flex-col items-start w-full max-w-sm mt-auto">
-          {(() => {
-            const estadoNormalizado = (suscripcionActiva?.estado || 'INACTIVO').toUpperCase();
-            const sesionesRestantes = suscripcionActiva?.sesiones_restantes ?? 0;
-            const tieneSesionesDisponibles = isIlimitado || (suscripcionActiva?.sesiones_restantes !== null && sesionesRestantes > 0);
-            const esPlanActivoOPrueba = estadoNormalizado === 'ACTIVO' || estadoNormalizado === 'CLASE DE PRUEBA';
+        </section>
+      )}
 
-            // 1. Condición para Banner de Renovación:
-            // Se muestra si el estado es 'INACTIVO' (o vencido) O si sesiones_restantes <= 0 (incluso en 'ACTIVO' o 'CLASE DE PRUEBA')
-            const debeMostrarRenovacion = !suscripcionActiva || 
-                                          estadoNormalizado === 'INACTIVO' || 
-                                          estadoNormalizado === 'VENCIDO' || 
-                                          estaVencido || 
-                                          (!isIlimitado && sesionesRestantes <= 0);
+      {/* 3. Tarjeta Exclusiva de Rendimiento Histórico (Hero Bento: Promedio + PR) */}
+      <section className="space-y-4 animate-in fade-in duration-500">
+        <div className="relative overflow-hidden rounded-3xl bg-zinc-950/80 backdrop-blur-xl border border-white/10 p-6 shadow-2xl">
+          {/* Acento estético superior y resplandor */}
+          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-[#02D7E5] to-transparent opacity-80" />
+          <div className="absolute -bottom-16 -right-16 w-48 h-48 bg-[#02D7E5]/10 rounded-full blur-3xl pointer-events-none" />
 
-            // Si el usuario ya no tiene sesiones disponibles, forzar el banner de renovación
-            if (debeMostrarRenovacion && !userBookedProximaClase) {
-              return (
-                <>
-                  <h3 className="font-bold text-white text-3xl tracking-tight leading-tight mb-2">
-                    ¡Afíliate ahora!
-                  </h3>
-                  <p className="text-zinc-300 text-sm font-medium mb-5">
-                    Mantén tu ritmo. Renueva tu plan para seguir entrenando.
-                  </p>
-                  <Link 
-                    href="/dashboard/suscripcion/nueva"
-                    className="px-6 py-3 w-full bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)] flex items-center justify-center gap-2"
-                  >
-                    Renovar Plan <ArrowRight className="w-5 h-5" />
-                  </Link>
-                </>
-              );
-            }
+          <div className="space-y-5">
+            {/* Header de la tarjeta con Heat Indicator */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Timer className="w-4 h-4 text-[#02D7E5]" />
+                <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                  Rendimiento Histórico
+                </span>
+              </div>
 
-            if (userData?.etiqueta_lead === 'PRUEBA_PENDIENTE' && tieneSesionesDisponibles) {
-              return (
-                <>
-                  <h3 className="font-bold text-white text-3xl tracking-tight leading-tight mb-2">
-                    ¡Bienvenido a la comunidad!
-                  </h3>
-                  <p className="text-zinc-300 text-sm font-medium mb-5">
-                    Reserva tu clase de prueba y conoce nuestro sistema.
-                  </p>
-                  <Link 
-                    href="/dashboard/reservas"
-                    className="px-6 py-3 w-full bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)] flex items-center justify-center gap-2"
-                  >
-                    Agendar mi prueba <ArrowRight className="w-5 h-5" />
-                  </Link>
-                </>
-              );
-            }
+              {heatsLiberados ? (
+                heatAsignado ? (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-[#02D7E5]/20 to-cyan-500/10 border border-[#02D7E5]/40 text-[#02D7E5] font-bold text-xs shadow-sm">
+                    <Flame className="w-3.5 h-3.5 text-[#02D7E5]" />
+                    <span>{heatAsignado}</span>
+                  </div>
+                ) : (
+                  <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-400 font-semibold text-[11px]">
+                    <span>Heat: Por asignar</span>
+                  </div>
+                )
+              ) : (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 font-semibold text-[11px]">
+                  <Clock className="w-3 h-3 text-amber-400" />
+                  <span>Heat: Pendiente de publicación</span>
+                </div>
+              )}
+            </div>
 
-            if (userData?.etiqueta_lead === 'PRUEBA_RESERVADA') {
-              return (
-                <>
-                  <h3 className="font-bold text-white text-3xl tracking-tight leading-tight mb-2">
-                    ¡Estás a un paso!
-                  </h3>
-                  <p className="text-zinc-300 text-sm font-medium mb-5">
-                    Tu clase de prueba está agendada. Prepárate para darlo todo.
-                  </p>
-                  <Link 
-                    href="/dashboard/reservas"
-                    className="px-6 py-3 w-full bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)] flex items-center justify-center gap-2"
-                  >
-                    Ver mis reservas <ArrowRight className="w-5 h-5" />
-                  </Link>
-                </>
-              );
-            }
+            {/* Grid de Métricas Principales: Promedio Dinámico & Mejor Marca (PR) */}
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              {/* Métrica 1: Promedio Dinámico */}
+              <div className="p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 space-y-1">
+                <div className="flex items-center gap-1.5 text-zinc-400">
+                  <Timer className="w-3.5 h-3.5 text-zinc-400" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider truncate">
+                    {tiemposValidos.length > 0
+                      ? `Promedio (${tiemposValidos.length} ${tiemposValidos.length === 1 ? 'Test' : 'Tests'})`
+                      : 'Promedio Histórico'}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-3xl font-bold tracking-tight text-white">
+                    {promedioFormateado}
+                  </span>
+                  <span className="text-[10px] font-bold text-zinc-500">MM:SS</span>
+                </div>
+                <span className="text-[10px] text-zinc-500 block">
+                  {tiemposValidos.length > 0 ? 'Base de clasificación' : 'Sin registros'}
+                </span>
+              </div>
 
-            if (userData?.etiqueta_lead === 'PRUEBA_ASISTIDA' && !tienePlanPago) {
-              return (
-                <>
-                  <h3 className="font-bold text-white text-3xl tracking-tight leading-tight mb-2">
-                    ¿Qué tal tu primer entrenamiento?
-                  </h3>
-                  <p className="text-zinc-300 text-sm font-medium mb-5">
-                    No pierdas el ritmo. Adquiere tu plan y desata tu potencial.
-                  </p>
-                  <Link 
-                    href="/dashboard/suscripcion/nueva"
-                    className="px-6 py-3 w-full bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)] flex items-center justify-center gap-2"
-                  >
-                    Suscribirme ahora <ArrowRight className="w-5 h-5" />
-                  </Link>
-                </>
-              );
-            }
+              {/* Métrica 2: Mejor Marca (PR) Destacada */}
+              <div className="relative overflow-hidden p-4 rounded-2xl bg-gradient-to-br from-amber-500/15 via-zinc-900/80 to-black border border-amber-500/50 space-y-1 shadow-lg shadow-amber-500/5">
+                <div className="flex items-center justify-between text-amber-400">
+                  <div className="flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">
+                      Mejor Marca (PR)
+                    </span>
+                  </div>
+                  {tiemposValidos.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-md bg-amber-500/25 text-amber-300 font-extrabold text-[9px] border border-amber-500/40">
+                      PR
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-3xl font-bold tracking-tight text-amber-300 drop-shadow-sm">
+                    {prFormateado}
+                  </span>
+                  <span className="text-[10px] font-bold text-amber-400/80">MM:SS</span>
+                </div>
+                <span className="text-[10px] text-zinc-400 block">
+                  {tiemposValidos.length > 0 ? 'Tu récord personal' : 'Sin marcas'}
+                </span>
+              </div>
+            </div>
 
-            // 2. Condición estricta para "Listo para entrenar":
-            // SOLO debe mostrarse si el usuario tiene un plan activo/prueba AND sesiones_restantes > 0
-            if (esPlanActivoOPrueba && tieneSesionesDisponibles && !estaVencido) {
-              return (
-                <>
-                  <h3 className="font-bold text-white text-3xl tracking-tight leading-tight mb-2">
-                    ¡Listo para entrenar!
-                  </h3>
-                  <p className="text-zinc-300 text-sm font-medium mb-5">
-                    Asegura tu cupo en tu disciplina favorita.
-                  </p>
-                  <Link 
-                    href="/dashboard/reservas"
-                    className="px-6 py-3 w-full bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)] flex items-center justify-center gap-2"
-                  >
-                    Agendar Clase <ArrowRight className="w-5 h-5" />
-                  </Link>
-                </>
-              );
-            }
-
-            // Banner de Renovación por defecto si no cumple condiciones de agendar
-            return (
-              <>
-                <h3 className="font-bold text-white text-3xl tracking-tight leading-tight mb-2">
-                  ¡Afíliate ahora!
+            {/* Desglose Dinámico de Tests (N Tests) con Empty State */}
+            <div className="pt-2">
+              <div className="flex items-center justify-between mb-2.5">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                  Desglose de Tests Registrados
                 </h3>
-                <p className="text-zinc-300 text-sm font-medium mb-5">
-                  Mantén tu ritmo. Renueva tu plan para seguir entrenando.
-                </p>
-                <Link 
-                  href="/dashboard/suscripcion/nueva"
-                  className="px-6 py-3 w-full bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)] flex items-center justify-center gap-2"
-                >
-                  Renovar Plan <ArrowRight className="w-5 h-5" />
-                </Link>
-              </>
-            );
-          })()}
+                {testsList.length > 0 && (
+                  <span className="text-[10px] font-bold text-[#02D7E5] uppercase">
+                    {testsList.length} {testsList.length === 1 ? 'Test' : 'Tests'}
+                  </span>
+                )}
+              </div>
+
+              {testsList.length === 0 ? (
+                /* Empty State Minimalista y Elegante */
+                <div className="p-6 rounded-2xl bg-zinc-900/40 border border-white/5 text-center space-y-1.5">
+                  <Activity className="w-6 h-6 text-zinc-600 mx-auto" />
+                  <p className="text-xs text-zinc-300 font-bold">
+                    Aún no tienes tests oficiales registrados.
+                  </p>
+                  <p className="text-[11px] text-zinc-500 leading-relaxed">
+                    Tus marcas registradas por los jueces aparecerán aquí automáticamente.
+                  </p>
+                </div>
+              ) : (
+                /* Grid Dinámico de Tests */
+                <div className="grid grid-cols-2 gap-2.5">
+                  {testsList.map((test, index) => {
+                    const sec = test.tiempo_segundos
+                    const tieneTiempo = typeof sec === 'number' && sec > 0
+                    const esPR = tieneTiempo && sec === prSegundos && prSegundos > 0
+                    const numeroTest = test.numero_test ?? index + 1
+
+                    return (
+                      <div
+                        key={test.id || index}
+                        className={`p-3 rounded-2xl border flex items-center justify-between transition-all ${
+                          esPR
+                            ? 'bg-amber-500/10 border-amber-500/50 shadow-sm shadow-amber-500/10'
+                            : 'bg-zinc-900/60 border-zinc-800/80'
+                        }`}
+                      >
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-zinc-400 uppercase">
+                              Test {numeroTest}
+                            </span>
+                            {esPR && (
+                              <span className="px-1.5 py-0.2 rounded bg-amber-500/25 text-amber-300 text-[9px] font-extrabold border border-amber-500/40">
+                                PR
+                              </span>
+                            )}
+                          </div>
+                          <span
+                            className={`text-sm font-bold tracking-tight ${
+                              esPR
+                                ? 'text-amber-300'
+                                : tieneTiempo
+                                ? 'text-zinc-100'
+                                : 'text-zinc-600'
+                            }`}
+                          >
+                            {formatSegundosAMM_SS(sec)}
+                          </span>
+                        </div>
+                        <div
+                          className={`w-7 h-7 rounded-xl flex items-center justify-center ${
+                            esPR
+                              ? 'bg-amber-500/20 text-amber-400'
+                              : tieneTiempo
+                              ? 'bg-[#02D7E5]/10 text-[#02D7E5]'
+                              : 'bg-zinc-800/50 text-zinc-600'
+                          }`}
+                        >
+                          {esPR ? (
+                            <Zap className="w-3.5 h-3.5" />
+                          ) : (
+                            <Activity className="w-3.5 h-3.5" />
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* Hero Card */}
-      <section className="px-6">
-        <div className="bg-gradient-to-br from-zinc-900 to-black border border-zinc-800 rounded-3xl p-6 relative overflow-hidden shadow-2xl">
-          <div className="absolute top-0 left-0 w-1 h-full bg-brand-primary"></div>
-          <div className="absolute -right-10 -top-10 opacity-5">
-            <Dumbbell className="w-48 h-48" />
+      {/* 4. Hero Banner Grande de la Competición */}
+      <section className="relative overflow-hidden rounded-3xl border border-white/15 shadow-2xl transition-all">
+        {/* Background con imagen y capa oscura bg-black/60 para legibilidad */}
+        <div
+          className="absolute inset-0 bg-cover bg-center"
+          style={{ backgroundImage: `url('/images/LOGO TEXTURA01.png')` }}
+        />
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px]" />
+        
+        {/* Resplandor sutil cyan */}
+        <div className="absolute -top-12 -right-12 w-48 h-48 bg-[#02D7E5]/15 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="relative z-10 p-6 md:p-8 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <span className="px-3 py-1 rounded-full bg-[#02D7E5]/20 border border-[#02D7E5]/40 text-[#02D7E5] font-bold text-[10px] uppercase tracking-widest flex items-center gap-1.5">
+              <Flame className="w-3.5 h-3.5 text-[#02D7E5]" />
+              Competición Oficial
+            </span>
+
+            <span className="text-[11px] font-bold text-zinc-300 uppercase tracking-wider">
+              {simulacionReciente?.estado || 'Confirmada'}
+            </span>
           </div>
-          <div className="relative z-10 flex flex-col items-start">
-            <h2 className="text-xs font-bold tracking-widest text-zinc-400 uppercase mb-2">
-              TUS PRÓXIMAS RESERVAS
+
+          <div className="space-y-1.5 max-w-sm">
+            <h2 className="text-xl md:text-2xl font-bold text-white tracking-tight">
+              {simulacionReciente?.nombre || 'Simulación Hyrox Factory'}
             </h2>
 
-            {userBookedProximaClase ? (
-              <>
-                <p className="text-3xl font-black text-white mb-1 tracking-tight">
-                  {disciplinaNombre}
-                </p>
-                {formattedDate && (
-                  <p className="text-brand-primary font-medium mb-4">{formattedDate}</p>
-                )}
-                <button
-                  disabled
-                  className="px-5 py-2 bg-brand-primary/20 text-brand-primary font-bold text-sm rounded-full cursor-default border border-brand-primary/50"
-                >
-                  Ya Reservada
-                </button>
-              </>
+            {heatsLiberados ? (
+              <p className="text-sm text-zinc-100 font-semibold flex items-center gap-2">
+                <span>Asignado al</span>
+                <span className="px-2.5 py-0.5 rounded-lg bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 font-bold text-sm">
+                  {heatAsignado || 'Heat por asignar'}
+                </span>
+              </p>
             ) : (
-              <>
-                <p className="text-xl font-bold text-white tracking-tight text-zinc-300">No tienes clases agendadas</p>
-              </>
+              <p className="text-xs text-zinc-300 leading-relaxed font-medium">
+                Conoce el cronograma oficial de la jornada, la pista y la información del evento.
+              </p>
             )}
           </div>
-        </div>
-      </section>
 
-      {/* Quick Access */}
-      <section className="px-6">
-        <div className="flex justify-between items-center px-2">
-          <Link href={!puedeAgendar ? "/dashboard/suscripcion/nueva" : "/dashboard/reservas"} className={`flex flex-col items-center gap-2 group ${!puedeAgendar ? 'opacity-50 grayscale' : ''}`}>
-            <div className="w-14 h-14 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-white group-hover:border-brand-primary group-hover:text-brand-primary transition-all shadow-lg">
-              <CalendarPlus className="w-6 h-6" />
-            </div>
-            <span className="text-xs font-medium text-zinc-400 group-hover:text-white transition-colors">Agendar</span>
-          </Link>
-
-          <button className="flex flex-col items-center gap-2 group">
-            <div className="w-14 h-14 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-white group-hover:border-brand-primary group-hover:text-brand-primary transition-all shadow-lg">
-              <Dumbbell className="w-6 h-6" />
-            </div>
-            <span className="text-xs font-medium text-zinc-400 group-hover:text-white transition-colors">Rutina</span>
-          </button>
-
-          <button className="flex flex-col items-center gap-2 group">
-            <div className="w-14 h-14 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-white group-hover:border-brand-primary group-hover:text-brand-primary transition-all shadow-lg">
-              <CreditCard className="w-6 h-6" />
-            </div>
-            <span className="text-xs font-medium text-zinc-400 group-hover:text-white transition-colors">Pagos</span>
-          </button>
-
-          <button className="flex flex-col items-center gap-2 group">
-            <div className="w-14 h-14 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-white group-hover:border-brand-primary group-hover:text-brand-primary transition-all shadow-lg">
-              <TrendingUp className="w-6 h-6" />
-            </div>
-            <span className="text-xs font-medium text-zinc-400 group-hover:text-white transition-colors">Progreso</span>
-          </button>
-        </div>
-      </section>
-
-      {/* Disciplinas */}
-      <section className="px-6">
-        <h3 className="text-lg font-bold text-white mb-4 tracking-tight">Explora nuestras disciplinas</h3>
-
-        <div className="space-y-4">
-          <div className="relative h-48 rounded-3xl overflow-hidden group cursor-pointer border border-zinc-800 shadow-xl">
-            <img
-              src="https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=1000&auto=format&fit=crop"
-              alt="Factory System 60"
-              className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent"></div>
-            <div className="absolute bottom-0 left-0 w-full p-5 flex justify-between items-end">
-              <div className="w-full pr-10">
-                <h4 className="text-xl font-bold text-white mb-1">Factory System 60</h4>
-                <p className="text-xs text-zinc-300 font-medium leading-tight">Método de 60 días. Alta intensidad, funcional y fuerza para resultados visibles.</p>
-              </div>
-              <div className="w-10 h-10 rounded-full bg-brand-primary flex items-center justify-center text-zinc-950 shadow-lg shrink-0">
-                <ArrowRight className="w-5 h-5" />
-              </div>
-            </div>
-          </div>
-
-          <div className="relative h-48 rounded-3xl overflow-hidden group cursor-pointer border border-zinc-800 shadow-xl">
-            <img
-              src="https://images.unsplash.com/photo-1571019614242-c5c5dee9f50b?q=80&w=1000&auto=format&fit=crop"
-              alt="Fábrica de Nalgas"
-              className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent"></div>
-            <div className="absolute bottom-0 left-0 w-full p-5 flex justify-between items-end">
-              <div className="w-full pr-10">
-                <h4 className="text-xl font-bold text-white mb-1">Fábrica de Nalgas</h4>
-                <p className="text-xs text-zinc-300 font-medium leading-tight">Enfoque en glúteos y piernas. Ejercicios aislados/compuestos y aumento progresivo de peso.</p>
-              </div>
-              <div className="w-10 h-10 rounded-full bg-brand-primary flex items-center justify-center text-zinc-950 shadow-lg shrink-0">
-                <ArrowRight className="w-5 h-5" />
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="relative h-48 rounded-3xl overflow-hidden group cursor-pointer border border-zinc-800 shadow-xl">
-              <img
-                src="https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=500&auto=format&fit=crop"
-                alt="Fitness Bodybuilding 2.0"
-                className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent"></div>
-              <div className="absolute bottom-4 left-4 pr-2">
-                <h4 className="text-lg font-bold text-white leading-tight mb-1">Bodybuilding 2.0</h4>
-                <p className="text-[9px] text-zinc-300">Masa muscular e hipertrofia.</p>
-              </div>
-            </div>
-
-            <div className="relative h-48 rounded-3xl overflow-hidden group cursor-pointer border border-zinc-800 shadow-xl">
-              <img
-                src="https://images.unsplash.com/photo-1517836357463-d25dfeac3438?q=80&w=500&auto=format&fit=crop"
-                alt="Hyrox Factory"
-                className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent"></div>
-              <div className="absolute bottom-4 left-4 pr-2">
-                <h4 className="text-lg font-bold text-white leading-tight mb-1">Hyrox Factory</h4>
-                <p className="text-[9px] text-zinc-300">Entrenamiento híbrido definitivo.</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-zinc-900/50 rounded-2xl p-4 mt-2 border border-zinc-800/50">
-            <p className="text-xs text-zinc-400 font-medium leading-relaxed">
-              <span className="text-brand-primary font-bold">Duración:</span> 60 min. Sesiones guiadas por instructores certificados. Pregunta por nuestras clases especiales: Boxeo, Running, Pilates y Bailoterapia.
-            </p>
+          <div className="pt-2">
+            <Link
+              href="/dashboard/competicion"
+              className={`inline-flex items-center gap-2 px-5 py-3 rounded-2xl font-extrabold text-sm shadow-xl active:scale-[0.98] transition-all ${
+                heatsLiberados
+                  ? 'bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black shadow-[#02D7E5]/30'
+                  : 'bg-white/10 hover:bg-white/20 text-white border border-white/20'
+              }`}
+            >
+              <span>{heatsLiberados ? 'Ver mi categoría completa ->' : 'Ver más detalles'}</span>
+              <ArrowRight className="w-4 h-4" />
+            </Link>
           </div>
         </div>
       </section>

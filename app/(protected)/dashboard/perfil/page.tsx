@@ -1,158 +1,169 @@
 import { createClient } from '@/src/utils/supabase/server'
 import { redirect } from 'next/navigation'
-import { User, Phone, Calendar, CreditCard, ChevronLeft } from 'lucide-react'
 import Link from 'next/link'
+import {
+  User,
+  Phone,
+  Mail,
+  Shirt,
+  ShieldCheck,
+  ChevronLeft,
+  Award,
+  CheckCircle2
+} from 'lucide-react'
 import LogoutButton from './LogoutButton'
-import { formatCaracasDate } from '@/src/utils/timezone'
 
 export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
 export default async function PerfilAtletaPage() {
   const supabase = await createClient()
 
-  // 1. Obtener la sesión estrictamente protegida
-  const { data: { user } } = await supabase.auth.getUser()
+  // 1. Obtener la sesión protegida
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
 
   if (!user) {
     redirect('/login')
   }
 
-  // 2. Extraer datos del usuario y sus suscripciones asegurando el RLS implícito
+  // 2. Extraer datos limpios del usuario en public.usuarios (SIN JOIN A SUSCRIPCIONES)
   const { data: perfil, error } = await supabase
     .from('usuarios')
-    .select(`
-      nombre_completo,
-      telefono,
-      email,
-      suscripciones (
-        estado,
-        fecha_corte,
-        planes (
-          nombre
-        )
-      )
-    `)
+    .select('id, nombres, cedula, telefono, email, talla_franela, rol')
     .eq('id', user.id)
-    .single()
+    .maybeSingle()
 
-  if (error || !perfil) {
-    console.error('[Perfil] Error obteniendo datos:', error)
-    redirect('/dashboard')
+  if (error) {
+    console.error('[Perfil] Error obteniendo datos del atleta:', error)
   }
 
-  // Manejo seguro del array de suscripciones
-  const suscripcionesArray = Array.isArray(perfil.suscripciones) 
-    ? perfil.suscripciones 
-    : [perfil.suscripciones].filter(Boolean)
-
-  const suscripcionActiva = suscripcionesArray.find((s: any) => s.estado === 'ACTIVO') || suscripcionesArray[0]
-  const estado = (suscripcionActiva?.estado || 'INACTIVO').toUpperCase()
-  const fechaCorte = suscripcionActiva?.fecha_corte 
-    ? formatCaracasDate(suscripcionActiva.fecha_corte)
-    : 'No disponible'
-  const planesObj = Array.isArray(suscripcionActiva?.planes) ? suscripcionActiva.planes[0] : suscripcionActiva?.planes;
-  const nombrePlan = (planesObj as any)?.nombre || 'No tienes ningún plan activo'
+  const nombres = perfil?.nombres || 'Atleta Hyrox'
+  const cedula = perfil?.cedula || 'N/A'
+  const email = perfil?.email || user.email || 'N/A'
+  const telefono = perfil?.telefono || 'No registrado'
+  const tallaFranela = perfil?.talla_franela ? `Talla ${perfil.talla_franela}` : 'Sin especificar'
 
   return (
-    <div className="min-h-screen bg-black text-white pb-24">
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-black/80 backdrop-blur-md border-b border-white/10 px-4 py-4 flex items-center gap-4">
-        <Link href="/dashboard" className="text-zinc-400 hover:text-white transition-colors">
-          <ChevronLeft className="w-6 h-6" />
+    <main className="pb-16 px-4 pt-4 space-y-6 max-w-md mx-auto">
+      {/* 1. Header con Navegación hacia Atrás */}
+      <header className="flex items-center gap-3">
+        <Link
+          href="/dashboard"
+          className="w-10 h-10 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white transition-colors shrink-0"
+          title="Volver al inicio"
+        >
+          <ChevronLeft className="w-5 h-5" />
         </Link>
-        <h1 className="text-xl font-bold tracking-wide">Mi Perfil</h1>
+        <div>
+          <span className="text-[10px] font-bold tracking-widest text-[#02D7E5] uppercase">
+            Ajustes de Cuenta
+          </span>
+          <h1 className="text-xl font-bold text-white tracking-tight">
+            Perfil del Atleta
+          </h1>
+        </div>
       </header>
 
-      <main className="p-4 space-y-8">
-        {/* Avatar y Datos Personales */}
-        <section className="flex flex-col items-center justify-center pt-8 pb-4">
-          <div className="w-24 h-24 rounded-full bg-zinc-900 border-2 border-brand-primary flex items-center justify-center mb-4 shadow-[0_0_15px_rgba(2,215,229,0.2)]">
-            <User className="w-10 h-10 text-brand-primary" />
-          </div>
-          <h2 className="text-2xl font-bold text-center tracking-wide">
-            {perfil.nombre_completo || 'Atleta'}
-          </h2>
-          <p className="text-sm text-zinc-400 mt-1">
-            {perfil.email && !perfil.email.includes('@fitnessfactory.local')
-              ? perfil.email
-              : 'Sin correo electrónico registrado'}
-          </p>
-        </section>
+      {/* 2. Tarjeta Bento Principal: Atleta & Credencial */}
+      <section className="relative overflow-hidden rounded-3xl bg-zinc-950/80 backdrop-blur-xl border border-white/10 p-6 shadow-2xl">
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-[#02D7E5] to-transparent opacity-80" />
+        <div className="absolute -bottom-12 -right-12 w-36 h-36 bg-[#02D7E5]/10 rounded-full blur-2xl pointer-events-none" />
 
-        {/* Tarjeta de Membresía */}
-        <section className="space-y-4">
-          <h3 className="text-sm uppercase tracking-widest text-zinc-500 font-semibold px-1">
-            Membresía
-          </h3>
-          <div className="bg-zinc-900 border border-white/10 rounded-2xl p-5 shadow-lg relative overflow-hidden">
-            {/* Elemento decorativo */}
-            <div className="absolute -right-4 -top-4 w-24 h-24 bg-brand-primary/10 rounded-full blur-2xl" />
-            
-            <div className="flex justify-between items-start mb-6">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-brand-primary/10 rounded-lg">
-                  <CreditCard className="w-5 h-5 text-brand-primary" />
-                </div>
-                <span className="font-semibold tracking-wide">Suscripción Actual</span>
-              </div>
-              <span className={`px-3 py-1 rounded-full text-xs font-bold tracking-widest border ${
-                estado === 'ACTIVO' 
-                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
-                  : 'bg-red-500/10 text-red-400 border-red-500/20'
-              }`}>
-                {estado}
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-[#02D7E5]/25 via-zinc-900 to-zinc-800 border border-[#02D7E5]/40 flex items-center justify-center shadow-lg shadow-[#02D7E5]/15 shrink-0">
+            <User className="w-8 h-8 text-[#02D7E5]" />
+          </div>
+          <div className="space-y-1 overflow-hidden">
+            <div className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#02D7E5]/10 text-[#02D7E5] border border-[#02D7E5]/30">
+              <Award className="w-3 h-3" />
+              <span>Competidor Oficial</span>
+            </div>
+            <h2 className="text-lg font-bold text-white tracking-tight truncate">
+              {nombres}
+            </h2>
+            <p className="text-xs text-zinc-400 flex items-center gap-1.5 font-medium">
+              <CheckCircle2 className="w-3.5 h-3.5 text-[#02D7E5]" />
+              Ficha Validada
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* 3. Grid Bento: Datos Personales Oficiales */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 px-1">
+          Información Personal y de Carrera
+        </h3>
+
+        <div className="grid grid-cols-2 gap-3">
+          {/* Tarjeta Documento */}
+          <div className="p-4 rounded-3xl bg-zinc-950/70 border border-zinc-800/80 flex flex-col justify-between space-y-2">
+            <div className="w-9 h-9 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-[#02D7E5]">
+              <ShieldCheck className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">
+                Cédula / Documento
+              </span>
+              <span className="text-sm font-bold text-white truncate block">
+                {cedula}
               </span>
             </div>
-            
-            <div className="space-y-1 mb-4">
-              <p className="text-xs text-zinc-400 font-medium">Plan Activo</p>
-              <div className="flex items-center gap-2 text-white">
-                <p className="text-sm font-semibold tracking-wide">{nombrePlan}</p>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <p className="text-xs text-zinc-400 font-medium">Próximo Vencimiento</p>
-              <div className="flex items-center gap-2 text-white">
-                <Calendar className="w-4 h-4 text-zinc-500" />
-                <p className="text-lg font-semibold tracking-wide">{fechaCorte}</p>
-              </div>
-            </div>
           </div>
-        </section>
 
-        {/* Sección Facturación */}
-        <section className="space-y-4">
-          <h3 className="text-sm uppercase tracking-widest text-zinc-500 font-semibold px-1">
-            Facturación
-          </h3>
-          <div className="bg-zinc-900 border border-white/10 rounded-2xl p-5 shadow-lg relative flex flex-col items-center justify-center opacity-70">
-            <span className="px-3 py-1 bg-brand-primary/20 text-brand-primary rounded-full text-xs font-bold uppercase tracking-widest border border-brand-primary/30 mb-2">
-              Próximamente
-            </span>
-            <p className="text-sm text-zinc-400 text-center font-medium">Historial de pagos y facturas en desarrollo.</p>
-          </div>
-        </section>
-
-        {/* Información de Contacto */}
-        <section className="space-y-4">
-          <h3 className="text-sm uppercase tracking-widest text-zinc-500 font-semibold px-1">
-            Contacto
-          </h3>
-          <div className="bg-zinc-900 border border-white/10 rounded-2xl overflow-hidden divide-y divide-white/5">
-            <div className="p-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Phone className="w-5 h-5 text-zinc-500" />
-                <span className="text-sm text-zinc-300">Teléfono Móvil</span>
-              </div>
-              <span className="text-sm font-medium">{perfil.telefono || 'No registrado'}</span>
+          {/* Tarjeta Talla de Franela */}
+          <div className="p-4 rounded-3xl bg-zinc-950/70 border border-zinc-800/80 flex flex-col justify-between space-y-2">
+            <div className="w-9 h-9 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-[#02D7E5]">
+              <Shirt className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">
+                Talla Oficial
+              </span>
+              <span className="text-sm font-bold text-[#02D7E5] block">
+                {tallaFranela}
+              </span>
             </div>
           </div>
-        </section>
 
-        {/* Botón de Cerrar Sesión */}
+          {/* Tarjeta Correo */}
+          <div className="col-span-2 p-4 rounded-3xl bg-zinc-950/70 border border-zinc-800/80 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-[#02D7E5] shrink-0">
+              <Mail className="w-4 h-4" />
+            </div>
+            <div className="overflow-hidden">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">
+                Correo Electrónico
+              </span>
+              <span className="text-xs font-bold text-zinc-200 truncate block">
+                {email}
+              </span>
+            </div>
+          </div>
+
+          {/* Tarjeta Teléfono */}
+          <div className="col-span-2 p-4 rounded-3xl bg-zinc-950/70 border border-zinc-800/80 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-[#02D7E5] shrink-0">
+              <Phone className="w-4 h-4" />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block">
+                Teléfono de Contacto
+              </span>
+              <span className="text-xs font-bold text-zinc-200 block">
+                {telefono}
+              </span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 4. Botón de Cerrar Sesión */}
+      <section className="pt-2">
         <LogoutButton />
-      </main>
-    </div>
+      </section>
+    </main>
   )
 }

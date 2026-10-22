@@ -189,7 +189,7 @@ export default function CheckoutClient({ plan, user, metodosPago, ordenPrevia }:
       <header className="flex items-center mb-8 relative">
         {(step === 'SELECCION' || step === 'RESUMEN' || step === 'ERROR' || step === 'INFO_MANUAL' || step === 'FORM_MANUAL') && (
           <button 
-            onClick={() => step === 'SELECCION' ? router.push('/dashboard/suscripcion/nueva') : setStep('SELECCION')}
+            onClick={() => step === 'SELECCION' ? router.push('/dashboard') : setStep('SELECCION')}
             className="absolute left-0 p-2 -ml-2 text-zinc-400 hover:text-white transition-colors"
           >
             <ArrowLeft className="w-6 h-6" />
@@ -509,7 +509,7 @@ export default function CheckoutClient({ plan, user, metodosPago, ordenPrevia }:
             <p className="text-zinc-400">Tu suscripción está activa. ¡Listo para entrenar!</p>
             
             <button
-              onClick={() => router.push('/dashboard/reservas')}
+              onClick={() => router.push('/dashboard')}
               className="w-full mt-6 py-4 bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(2,215,229,0.3)]"
             >
               Ir a mis reservas
@@ -526,7 +526,7 @@ export default function CheckoutClient({ plan, user, metodosPago, ordenPrevia }:
             <p className="text-zinc-400">Tu pago está siendo validado por nuestro equipo.</p>
             
             <button
-              onClick={() => router.push('/dashboard/reservas')}
+              onClick={() => router.push('/dashboard')}
               className="w-full mt-6 py-4 bg-amber-500 hover:bg-amber-600 text-black font-extrabold rounded-xl transition-all shadow-[0_4px_20px_rgba(245,158,11,0.2)]"
             >
               Ir a mis reservas

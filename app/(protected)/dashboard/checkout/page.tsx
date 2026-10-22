@@ -14,7 +14,7 @@ export default async function CheckoutPage({
   const planId = params.plan_id
 
   if (!planId) {
-    redirect('/dashboard/suscripcion/nueva')
+    redirect('/dashboard')
   }
 
   const supabase = await createClient()
@@ -32,7 +32,7 @@ export default async function CheckoutPage({
     .single()
 
   if (planError || !plan) {
-    redirect('/dashboard/suscripcion/nueva')
+    redirect('/dashboard')
   }
 
   // Fetch user details

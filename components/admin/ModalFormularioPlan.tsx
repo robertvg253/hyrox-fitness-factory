@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { X, Loader2, Save } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { obtenerSedesParaSelect, upsertPlan } from '@/app/admin/(protected)/catalogo/planes/actions'
+import { obtenerSedesParaSelect, upsertPlan } from '@/app/admin/(protected)/planes/actions'
 
 interface ModalFormularioPlanProps {
   isOpen: boolean

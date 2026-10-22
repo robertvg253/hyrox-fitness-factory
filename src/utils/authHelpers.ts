@@ -6,7 +6,7 @@ export function generarIdentidadFantasma(cedula: string) {
   
   // Usamos crypto.randomUUID() genérico de entorno Node
   const claveFicticia = `${crypto.randomUUID()}A1!`;
-  const emailFicticio = `${cedulaNormalizada}@fitnessfactory.local`;
+  const emailFicticio = `${cedulaNormalizada}@hyrox.local`;
 
   return { emailFicticio, claveFicticia };
 }

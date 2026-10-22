@@ -16,11 +16,11 @@ export async function proxy(request: NextRequest) {
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-          
+
           supabaseResponse = NextResponse.next({
             request,
           })
-          
+
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
           )
@@ -40,71 +40,58 @@ export async function proxy(request: NextRequest) {
   const isAdminLogin = pathname === '/admin/login'
   const isClientRoute = pathname.startsWith('/dashboard')
 
-  // Redirigir si ya está autenticado e intenta ir a login
+  // Redirigir si ya está autenticado e intenta ir a login de atleta
   if (pathname === '/login' && user) {
-    url.pathname = '/dashboard'
+    const { data: usuario } = await supabase
+      .from('usuarios')
+      .select('rol')
+      .eq('id', user.id)
+      .maybeSingle()
+
+    const rol = (usuario?.rol || '').toLowerCase().trim()
+    url.pathname = rol === 'admin' ? '/admin/dashboard' : '/dashboard'
     return NextResponse.redirect(url)
   }
 
   // ==========================================
-  // LÓGICA DE RUTAS DE ADMIN
+  // LÓGICA DE RUTAS DE ADMIN (/admin/:path*)
   // ==========================================
   if (isAdminRoute) {
+    // 1. Si no está autenticado y no está en el login de admin, redirigir a /admin/login
     if (!user && !isAdminLogin) {
       url.pathname = '/admin/login'
       return NextResponse.redirect(url)
     }
 
     if (user) {
-      // 1. Fetch de rol del usuario
-      const { data: usuarioCrudo, error } = await supabase
+      // 2. Fetch del rol directamente en public.usuarios
+      const { data: usuarioCrudo } = await supabase
         .from('usuarios')
         .select('rol')
         .eq('id', user.id)
-        .single()
+        .maybeSingle()
 
-      if (error) {
-        console.log("[MIDDLEWARE ERROR] Fallo al leer usuario en admin:", error)
-      }
+      const rol = (usuarioCrudo?.rol || '').toLowerCase().trim()
+      const esAdmin = rol === 'admin'
 
-      const rol = (usuarioCrudo?.rol || '').toUpperCase()
-      const isStaff = ['SUPERADMIN', 'GERENTE', 'GERENTE_SEDE', 'RECEPCIONISTA', 'RECEPCION'].includes(rol)
-
-      // 1. Validación estricta: Si es ATLETA o no tiene rol de staff, expulsarlo inmediatamente
-      if (!isStaff) {
-        url.pathname = rol === 'ATLETA' ? '/dashboard' : '/login'
-        return NextResponse.redirect(url)
-      }
-
-      // 2. Si está autenticado como staff e intenta acceder a /admin/login
+      // Si está en /admin/login y ya está logueado:
       if (isAdminLogin) {
-        url.pathname = '/admin/dashboard'
+        url.pathname = esAdmin ? '/admin/dashboard' : '/dashboard'
         return NextResponse.redirect(url)
       }
 
-      // 3. Doble protección de rutas de alta gerencia: /admin/finanzas y /admin/kpis
-      const isHighManagementRoute = pathname.startsWith('/admin/finanzas') || pathname.startsWith('/admin/kpis')
-      const isHighManagementRole = ['SUPERADMIN', 'GERENTE', 'GERENTE_SEDE'].includes(rol)
-
-      if (isHighManagementRoute && !isHighManagementRole) {
-        // Recepción y otros roles de staff son redirigidos a su panel principal
-        url.pathname = '/admin/dashboard'
-        return NextResponse.redirect(url)
-      }
-
-      // 4. Protección estricta de /admin/configuracion: Únicamente SUPERADMIN
-      const isConfiguracionRoute = pathname.startsWith('/admin/configuracion')
-      if (isConfiguracionRoute && rol !== 'SUPERADMIN') {
-        url.pathname = '/admin/dashboard'
+      // Si intenta acceder a cualquier ruta protegida de admin y NO es admin:
+      if (!esAdmin) {
+        url.pathname = '/dashboard'
         return NextResponse.redirect(url)
       }
     }
-    
+
     return supabaseResponse
   }
 
   // ==========================================
-  // LÓGICA DE RUTAS DE CLIENTE
+  // LÓGICA DE RUTAS DE ATLETA (/dashboard)
   // ==========================================
   if (isClientRoute) {
     if (!user) {
@@ -112,8 +99,6 @@ export async function proxy(request: NextRequest) {
       return NextResponse.redirect(url)
     }
 
-    // Ya no bloqueamos ni redirigimos a /pago-requerido por estado.
-    // El componente del /dashboard manejará la degradación elegante de UI.
     return supabaseResponse
   }
 
