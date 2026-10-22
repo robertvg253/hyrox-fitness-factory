@@ -247,8 +247,54 @@ function ActivacionContent() {
     }
   }
 
+  const handleOtpPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault()
+    const pastedData = e.clipboardData.getData('text').trim().replace(/\D/g, '')
+    if (!pastedData) return
+
+    const digits = pastedData.slice(0, 6).split('')
+    const newOtp = [...otpDigits]
+
+    digits.forEach((digit, idx) => {
+      if (idx < 6) {
+        newOtp[idx] = digit
+      }
+    })
+
+    setOtpDigits(newOtp)
+
+    // Enfocar el último input rellenado o el índice 5
+    const targetIndex = Math.min(digits.length, 6) - 1
+    if (targetIndex >= 0) {
+      otpInputRefs.current[targetIndex]?.focus()
+    }
+
+    if (digits.length >= 6) {
+      handleVerificarOtp(digits.slice(0, 6).join(''))
+    }
+  }
+
   const handleOtpChange = (index: number, val: string) => {
-    const digit = val.slice(-1)
+    const clean = val.replace(/\D/g, '')
+    // Si el teclado del móvil o autocompletado inserta varios dígitos de golpe
+    if (clean.length > 1) {
+      const digits = clean.slice(0, 6).split('')
+      const newOtp = [...otpDigits]
+      digits.forEach((d, idx) => {
+        if (idx < 6) newOtp[idx] = d
+      })
+      setOtpDigits(newOtp)
+      const targetIndex = Math.min(digits.length, 6) - 1
+      if (targetIndex >= 0) {
+        otpInputRefs.current[targetIndex]?.focus()
+      }
+      if (digits.length >= 6) {
+        handleVerificarOtp(digits.slice(0, 6).join(''))
+      }
+      return
+    }
+
+    const digit = clean.slice(-1)
     const newOtp = [...otpDigits]
     newOtp[index] = digit
     setOtpDigits(newOtp)
@@ -712,18 +758,18 @@ function ActivacionContent() {
                   </div>
                 </div>
 
-                <div className="space-y-1">
+                <div className="space-y-1 w-full max-w-full overflow-hidden box-border">
                   <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
                     Fecha de Nacimiento
                   </label>
-                  <div className="relative">
-                    <Calendar className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <div className="relative w-full max-w-full overflow-hidden box-border">
+                    <Calendar className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
                     <input
                       type="date"
                       required
                       value={fechaNacimiento}
                       onChange={e => setFechaNacimiento(e.target.value)}
-                      className="w-full pl-10 pr-3 py-2.5 bg-zinc-900 border border-white/10 rounded-2xl text-[16px] text-white focus:outline-none focus:border-[#02D7E5]"
+                      className="w-full max-w-full min-w-0 box-border overflow-hidden pl-10 pr-3 py-2.5 bg-zinc-900 border border-white/10 rounded-2xl text-[16px] text-white focus:outline-none focus:border-[#02D7E5] [color-scheme:dark]"
                     />
                   </div>
                 </div>
@@ -774,17 +820,19 @@ function ActivacionContent() {
               </div>
 
               <div className="space-y-4 pt-1">
-                <div className="flex justify-between gap-1.5">
+                <div className="flex justify-between gap-1.5 w-full max-w-full box-border">
                   {otpDigits.map((digit, i) => (
                     <input
                       key={i}
                       ref={el => { otpInputRefs.current[i] = el }}
                       type="text"
                       inputMode="numeric"
+                      autoComplete="one-time-code"
                       maxLength={1}
                       value={digit}
                       onChange={e => handleOtpChange(i, e.target.value)}
                       onKeyDown={e => handleOtpKeyDown(i, e)}
+                      onPaste={handleOtpPaste}
                       className="w-10 h-12 text-center text-[16px] font-bold bg-zinc-900 border border-white/15 rounded-xl text-white focus:outline-none focus:border-[#02D7E5]"
                     />
                   ))}
