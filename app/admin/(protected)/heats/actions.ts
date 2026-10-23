@@ -11,35 +11,85 @@ function getAdminClient() {
   )
 }
 
+function toTitleCase(str: string): string {
+  return str
+    .toLowerCase()
+    .split(' ')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
 /**
  * Auto-asignar Heats a todos los atletas de una simulación:
- * 1. Separa a los atletas en dos arreglos:
- *    - Incompletos (< 4 tests): Asignados directamente a 'Heat 1'.
- *    - Completos (4 tests exactos): Ordenados por tiempo promedio de MAYOR a MENOR (más lentos primero).
- * 2. Divide a los "Completos" en 6 chunks usando Math.ceil(completos.length / 6).
- *    - Chunk 1 -> 'Heat 1', Chunk 2 -> 'Heat 2', ..., Chunk 6 -> 'Heat 6'.
- * 3. Persiste en public.participantes_simulacion.
+ * 1. Agrupa a los atletas participantes por su categoria_id.
+ * 2. Ordena a los atletas por su tiempo promedio histórico dentro de su categoría (los más rápidos primero).
+ * 3. Divide cada categoría en subgrupos (chunks) de máximo 10 atletas.
+ * 4. Genera y asigna nombres de Heat dinámicos y secuenciales que incluyen la categoría
+ *    (ej: "Heat 1 - Individual Femenino", "Heat 2 - Individual Femenino", "Heat 3 - Duplas Masculino").
+ * 5. Persiste en public.participantes_simulacion.
  */
 export async function autoAsignarHeats(simulacionId: string) {
   try {
     const supabaseAdmin = getAdminClient()
 
-    // 1. Obtener todos los atletas registrados en public.usuarios
+    // 1. Obtener todas las categorías
+    const { data: categorias, error: errCategorias } = await supabaseAdmin
+      .from('categorias')
+      .select('id, nombre, tipo')
+      .order('nombre', { ascending: true })
+
+    if (errCategorias) throw errCategorias
+    if (!categorias || categorias.length === 0) {
+      return { success: false, error: 'No hay categorías configuradas en el sistema.' }
+    }
+    const defaultCatId = categorias[0].id
+    const catMap = new Map(categorias.map((c) => [c.id, c]))
+
+    // 2. Obtener participantes existentes en participantes_simulacion
+    const { data: participantesExistentes } = await supabaseAdmin
+      .from('participantes_simulacion')
+      .select('id, usuario_id, categoria_id, heat_asignado')
+      .eq('simulacion_id', simulacionId)
+
+    const partMap = new Map<string, { id: string; categoria_id: string | null }>()
+    participantesExistentes?.forEach((p) => {
+      if (p.usuario_id) {
+        partMap.set(p.usuario_id, { id: p.id, categoria_id: p.categoria_id })
+      }
+    })
+
+    // 3. Obtener todos los atletas registrados en public.usuarios
     const { data: usuariosAtletas, error: errAtletas } = await supabaseAdmin
       .from('usuarios')
-      .select('id, nombres, cedula')
+      .select('id, nombres, cedula, email')
       .ilike('rol', 'atleta')
 
     if (errAtletas) throw errAtletas
-    const atletas = usuariosAtletas || []
-    if (atletas.length === 0) {
-      return { success: false, error: 'No hay atletas registrados en el sistema.' }
+    const atletasUsuarios = usuariosAtletas || []
+
+    if (atletasUsuarios.length === 0 && (!participantesExistentes || participantesExistentes.length === 0)) {
+      return { success: false, error: 'No hay atletas participantes en el sistema.' }
     }
 
-    // 2. Obtener todos los tiempos históricos
+    // 4. Preinscripciones para resolver categoria_id por email en caso de que esté nula
+    const { data: preinscripciones } = await supabaseAdmin
+      .from('preinscripciones')
+      .select('email, categoria_id, partner_email')
+
+    const emailToCat = new Map<string, string>()
+    preinscripciones?.forEach((pre) => {
+      if (pre.email && pre.categoria_id) {
+        emailToCat.set(pre.email.toLowerCase().trim(), pre.categoria_id)
+      }
+      if (pre.partner_email && pre.categoria_id) {
+        emailToCat.set(pre.partner_email.toLowerCase().trim(), pre.categoria_id)
+      }
+    })
+
+    // 5. Obtener todos los tiempos históricos para calcular promedios
     const { data: todosTiempos, error: errTiempos } = await supabaseAdmin
       .from('tiempos_historicos')
-      .select('usuario_id, numero_test, tiempo_segundos')
+      .select('usuario_id, tiempo_segundos')
 
     if (errTiempos) throw errTiempos
 
@@ -52,103 +102,145 @@ export async function autoAsignarHeats(simulacionId: string) {
       }
     })
 
-    // 3. Separar en dos arreglos: Incompletos (< 4 tests) y Completos (4 tests exactos)
-    interface AtletaConTests {
-      id: string
+    // 6. Mapear cada participante con su tiempo promedio y su categoría
+    interface ParticipanteProcesado {
+      id?: string
+      usuarioId: string
       nombres: string
       cedula?: string
-      totalTests: number
+      categoriaId: string
+      categoriaNombre: string
       promedioSegundos: number
     }
 
-    const incompletos: AtletaConTests[] = []
-    const completos: AtletaConTests[] = []
+    // Agrupar a los atletas participantes por su categoria_id
+    const gruposPorCategoria = new Map<string, ParticipanteProcesado[]>()
+    categorias.forEach((c) => gruposPorCategoria.set(c.id, []))
 
-    atletas.forEach((atleta) => {
-      const tests = tiemposMap.get(atleta.id) || []
+    // Combinar atletas de usuarios y participantes
+    const processedUserIds = new Set<string>()
+
+    for (const u of atletasUsuarios) {
+      processedUserIds.add(u.id)
+      const part = partMap.get(u.id)
+      const tests = tiemposMap.get(u.id) || []
       const suma = tests.reduce((acc, v) => acc + v, 0)
       const promSec = tests.length > 0 ? Math.round(suma / tests.length) : 0
 
-      const item: AtletaConTests = {
-        id: atleta.id,
-        nombres: atleta.nombres,
-        cedula: atleta.cedula,
-        totalTests: tests.length,
+      let catId: string = defaultCatId
+      if (part?.categoria_id && catMap.has(part.categoria_id)) {
+        catId = part.categoria_id
+      } else if (u.email) {
+        const found = emailToCat.get(u.email.toLowerCase().trim())
+        if (found && catMap.has(found)) {
+          catId = found
+        }
+      }
+      const cat = catMap.get(catId) || categorias[0]
+
+      const item: ParticipanteProcesado = {
+        id: part?.id,
+        usuarioId: u.id,
+        nombres: u.nombres || 'Atleta Sin Nombre',
+        cedula: u.cedula || undefined,
+        categoriaId: catId,
+        categoriaNombre: cat.nombre,
         promedioSegundos: promSec,
       }
 
-      if (tests.length === 4) {
-        completos.push(item)
-      } else {
-        incompletos.push(item)
-      }
-    })
+      const lista = gruposPorCategoria.get(catId) || []
+      lista.push(item)
+      gruposPorCategoria.set(catId, lista)
+    }
 
-    // Ordenar "Completos" de MENOR a MAYOR (los más rápidos primero -> Heat 1)
-    completos.sort((a, b) => a.promedioSegundos - b.promedioSegundos)
-
-    // 4. Armar los registros a persistir
-    const rowsToUpsert: Array<{
+    // 7. Ordenar por tiempo promedio dentro de su categoría (los más rápidos primero: menor promedio)
+    // y dividir en subgrupos (chunks) de máximo 10 atletas.
+    // Generar y asignar nombres de Heat dinámicos y secuenciales que incluyan la categoría.
+    let heatCounter = 1
+    const CHUNK_SIZE = 10
+    const upserts: Array<{
+      id?: string
       simulacion_id: string
       usuario_id: string
+      categoria_id: string
       heat_asignado: string
       promedio_previo_segundos: number | null
       asistio: boolean
     }> = []
 
-    // Regla matemática para Completos (4 tests exactos):
-    // Dividir en 6 chunks usando Math.ceil(completos.length / 6)
-    // Chunk 1 (mejores tiempos) -> Heat 1 ... Chunk 6 (peores tiempos) -> Heat 6
-    if (completos.length > 0) {
-      const chunkSize = Math.max(1, Math.ceil(completos.length / 6))
+    for (const cat of categorias) {
+      const atletasDeCat = gruposPorCategoria.get(cat.id) || []
+      if (atletasDeCat.length === 0) continue
 
-      completos.forEach((atleta, index) => {
-        // Chunk 0 -> Heat 1, Chunk 1 -> Heat 2, ..., Chunk 5 -> Heat 6
-        const chunkIndex = Math.floor(index / chunkSize)
-        const heatNumero = Math.min(6, chunkIndex + 1)
-
-        rowsToUpsert.push({
-          simulacion_id: simulacionId,
-          usuario_id: atleta.id,
-          heat_asignado: `Heat ${heatNumero}`,
-          promedio_previo_segundos: atleta.promedioSegundos || null,
-          asistio: true,
-        })
+      // Ordenar: más rápidos primero (menor promedioSegundos > 0).
+      // Atletas sin tiempo (0) van al final de la categoría.
+      atletasDeCat.sort((a, b) => {
+        if (!a.promedioSegundos && b.promedioSegundos) return 1
+        if (a.promedioSegundos && !b.promedioSegundos) return -1
+        if (a.promedioSegundos !== b.promedioSegundos) {
+          return a.promedioSegundos - b.promedioSegundos
+        }
+        return a.nombres.localeCompare(b.nombres)
       })
+
+      // Dividir en chunks de máximo 10
+      for (let i = 0; i < atletasDeCat.length; i += CHUNK_SIZE) {
+        const chunk = atletasDeCat.slice(i, i + CHUNK_SIZE)
+        const heatNombre = `Heat ${heatCounter} - ${toTitleCase(cat.nombre)}`
+        heatCounter++
+
+        for (const atleta of chunk) {
+          upserts.push({
+            id: atleta.id,
+            simulacion_id: simulacionId,
+            usuario_id: atleta.usuarioId,
+            categoria_id: atleta.categoriaId,
+            heat_asignado: heatNombre,
+            promedio_previo_segundos: atleta.promedioSegundos || null,
+            asistio: true,
+          })
+        }
+      }
     }
 
-    // Regla estricta para Incompletos (< 4 tests): Penalizados directamente al 'Heat 6' (el más lento)
-    for (const atleta of incompletos) {
-      rowsToUpsert.push({
-        simulacion_id: simulacionId,
-        usuario_id: atleta.id,
-        heat_asignado: 'Heat 6',
-        promedio_previo_segundos: atleta.promedioSegundos || null,
-        asistio: true,
-      })
-    }
-
-    // 5. Guardar en public.participantes_simulacion
-    for (const row of rowsToUpsert) {
-      const { data: existente } = await supabaseAdmin
-        .from('participantes_simulacion')
-        .select('id')
-        .eq('simulacion_id', simulacionId)
-        .eq('usuario_id', row.usuario_id)
-        .maybeSingle()
-
-      if (existente?.id) {
+    // 8. Persistir en la base de datos (public.participantes_simulacion)
+    for (const item of upserts) {
+      if (item.id) {
         await supabaseAdmin
           .from('participantes_simulacion')
           .update({
-            heat_asignado: row.heat_asignado,
-            promedio_previo_segundos: row.promedio_previo_segundos,
+            heat_asignado: item.heat_asignado,
+            promedio_previo_segundos: item.promedio_previo_segundos,
+            categoria_id: item.categoria_id,
           })
-          .eq('id', existente.id)
+          .eq('id', item.id)
       } else {
-        await supabaseAdmin
+        const { data: existente } = await supabaseAdmin
           .from('participantes_simulacion')
-          .insert(row)
+          .select('id')
+          .eq('simulacion_id', item.simulacion_id)
+          .eq('usuario_id', item.usuario_id)
+          .maybeSingle()
+
+        if (existente?.id) {
+          await supabaseAdmin
+            .from('participantes_simulacion')
+            .update({
+              heat_asignado: item.heat_asignado,
+              promedio_previo_segundos: item.promedio_previo_segundos,
+              categoria_id: item.categoria_id,
+            })
+            .eq('id', existente.id)
+        } else {
+          await supabaseAdmin.from('participantes_simulacion').insert({
+            simulacion_id: item.simulacion_id,
+            usuario_id: item.usuario_id,
+            categoria_id: item.categoria_id,
+            heat_asignado: item.heat_asignado,
+            promedio_previo_segundos: item.promedio_previo_segundos,
+            asistio: true,
+          })
+        }
       }
     }
 
@@ -159,9 +251,8 @@ export async function autoAsignarHeats(simulacionId: string) {
 
     return {
       success: true,
-      totalAsignados: rowsToUpsert.length,
-      completosCount: completos.length,
-      incompletosCount: incompletos.length,
+      totalAsignados: upserts.length,
+      totalHeats: heatCounter - 1,
     }
   } catch (err: any) {
     console.error('[autoAsignarHeats] Excepción:', err)

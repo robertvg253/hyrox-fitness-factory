@@ -525,7 +525,7 @@ export default function RegistroAutonomoWizard() {
                         required
                         value={fechaNacimiento}
                         onChange={e => setFechaNacimiento(e.target.value)}
-                        className="w-full pl-10 pr-3 py-3 bg-zinc-900/90 border border-white/10 rounded-2xl text-xs text-white focus:outline-none focus:border-[#02D7E5]"
+                        className="block w-full max-w-full min-w-0 box-border pl-10 pr-3 py-3 bg-zinc-900/90 border border-white/10 rounded-2xl text-xs text-white focus:outline-none focus:border-[#02D7E5] [color-scheme:dark] appearance-none [-webkit-appearance:none]"
                       />
                     </div>
                   </div>

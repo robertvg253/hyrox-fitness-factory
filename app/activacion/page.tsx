@@ -16,7 +16,9 @@ import {
   Users,
   Sparkles,
   ShieldCheck,
-  Check
+  Check,
+  Eye,
+  EyeOff
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { createClient } from '@/src/utils/supabase/client'
@@ -71,6 +73,8 @@ function ActivacionContent() {
   // Step 3: Password
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
   // 1. Resiliencia: Hidratación desde localStorage al montar
   useEffect(() => {
@@ -716,7 +720,7 @@ function ActivacionContent() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}
-              className="rounded-3xl bg-zinc-950/90 border border-white/10 p-5 shadow-2xl space-y-4"
+              className="w-full max-w-full rounded-3xl bg-zinc-950/90 border border-white/10 p-5 shadow-2xl space-y-4 box-border overflow-hidden min-w-0"
             >
               <div className="space-y-1">
                 <span className="text-[10px] font-bold text-[#02D7E5] uppercase tracking-widest">
@@ -730,16 +734,16 @@ function ActivacionContent() {
                 </p>
               </div>
 
-              <form onSubmit={handleAvanzar2_2} className="space-y-3 pt-1">
-                <div className="space-y-1">
+              <form onSubmit={handleAvanzar2_2} className="w-full max-w-full space-y-3 pt-1 box-border min-w-0">
+                <div className="space-y-1 w-full max-w-full min-w-0 box-border">
                   <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
                     WhatsApp
                   </label>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 w-full max-w-full min-w-0 box-border">
                     <select
                       value={countryCode}
                       onChange={e => setCountryCode(e.target.value)}
-                      className="px-2.5 py-2.5 bg-zinc-900 border border-white/10 rounded-2xl text-[16px] font-bold text-white focus:outline-none"
+                      className="shrink-0 px-2.5 py-2.5 bg-zinc-900 border border-white/10 rounded-2xl text-[16px] font-bold text-white focus:outline-none"
                     >
                       <option value="+58">+58</option>
                       <option value="+1">+1</option>
@@ -753,23 +757,23 @@ function ActivacionContent() {
                       placeholder="4121234567"
                       value={phoneRaw}
                       onChange={e => setPhoneRaw(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                      className="flex-1 px-3 py-2.5 bg-zinc-900 border border-white/10 rounded-2xl text-[16px] text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
+                      className="flex-1 min-w-0 w-full px-3 py-2.5 bg-zinc-900 border border-white/10 rounded-2xl text-[16px] text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5] box-border"
                     />
                   </div>
                 </div>
 
-                <div className="space-y-1 w-full max-w-full overflow-hidden box-border">
+                <div className="space-y-1 w-full max-w-full min-w-0 box-border">
                   <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
                     Fecha de Nacimiento
                   </label>
-                  <div className="relative w-full max-w-full overflow-hidden box-border">
+                  <div className="relative w-full max-w-full min-w-0 box-border">
                     <Calendar className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
                     <input
                       type="date"
                       required
                       value={fechaNacimiento}
                       onChange={e => setFechaNacimiento(e.target.value)}
-                      className="w-full max-w-full min-w-0 box-border overflow-hidden pl-10 pr-3 py-2.5 bg-zinc-900 border border-white/10 rounded-2xl text-[16px] text-white focus:outline-none focus:border-[#02D7E5] [color-scheme:dark]"
+                      className="block w-full max-w-full min-w-0 box-border pl-10 pr-3 py-2.5 min-h-[46px] bg-zinc-900 border border-white/10 rounded-2xl text-[16px] text-white focus:outline-none focus:border-[#02D7E5] [color-scheme:dark] appearance-none [-webkit-appearance:none] text-left [&::-webkit-date-and-time-value]:text-left [&::-webkit-date-and-time-value]:min-h-[1.5em]"
                     />
                   </div>
                 </div>
@@ -905,17 +909,29 @@ function ActivacionContent() {
               </div>
 
               <form onSubmit={handleAvanzar3_1} className="space-y-3 pt-1">
-                <div className="relative">
+                <div className="relative flex items-center">
                   <Lock className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     required
                     autoFocus
                     placeholder="Contraseña"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-3 py-3 bg-zinc-900 border border-white/10 rounded-2xl text-[16px] text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
+                    className="w-full pl-10 pr-11 py-3 bg-zinc-900 border border-white/10 rounded-2xl text-[16px] text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(prev => !prev)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white transition-colors p-1 rounded-lg focus:outline-none cursor-pointer"
+                    title={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                  >
+                    {showPassword ? (
+                      <EyeOff className="w-4 h-4 text-zinc-400" />
+                    ) : (
+                      <Eye className="w-4 h-4 text-zinc-400" />
+                    )}
+                  </button>
                 </div>
 
                 {/* Micro Checklist inline */}
@@ -980,17 +996,29 @@ function ActivacionContent() {
               </div>
 
               <form onSubmit={handleFinalizarActivacion} className="space-y-3 pt-1">
-                <div className="relative">
+                <div className="relative flex items-center">
                   <Lock className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
-                    type="password"
+                    type={showConfirmPassword ? 'text' : 'password'}
                     required
                     autoFocus
                     placeholder="Repetir contraseña"
                     value={confirmPassword}
                     onChange={e => setConfirmPassword(e.target.value)}
-                    className="w-full pl-10 pr-3 py-3 bg-zinc-900 border border-white/10 rounded-2xl text-[16px] text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
+                    className="w-full pl-10 pr-11 py-3 bg-zinc-900 border border-white/10 rounded-2xl text-[16px] text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(prev => !prev)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white transition-colors p-1 rounded-lg focus:outline-none cursor-pointer"
+                    title={showConfirmPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
+                  >
+                    {showConfirmPassword ? (
+                      <EyeOff className="w-4 h-4 text-zinc-400" />
+                    ) : (
+                      <Eye className="w-4 h-4 text-zinc-400" />
+                    )}
+                  </button>
                 </div>
 
                 <div className={`p-2.5 rounded-xl text-xs flex items-center gap-2 border ${

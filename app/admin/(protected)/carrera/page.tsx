@@ -1,4 +1,5 @@
 import { createClient } from '@/src/utils/supabase/server'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import RegistroTiemposCarreraClient, { AtletaCarrera } from './RegistroTiemposCarreraClient'
@@ -17,7 +18,7 @@ function formatSegundosAMM_SS(totalSec: number | null | undefined): string {
 export default async function CarreraPage() {
   const supabase = await createClient()
 
-  // 1. Validar autenticación
+  // 1. Validar autenticación de administrador
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -26,25 +27,36 @@ export default async function CarreraPage() {
     redirect('/admin/login')
   }
 
-  // 2. Obtener simulación activa o más reciente
-  const { data: simulacionReciente } = await supabase
+  // 2. Cliente administrativo (Service Role) para acceso a participantes y categorías sin bloqueo de RLS
+  const supabaseAdmin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
+
+  // 3. Obtener simulación activa o más reciente
+  const { data: simulacionReciente } = await supabaseAdmin
     .from('simulaciones')
     .select('id, nombre, estado, tabla_liberada, heats_liberados, fecha_creacion')
     .order('fecha_creacion', { ascending: false })
     .limit(1)
     .maybeSingle()
 
-  // 3. Obtener todos los atletas registrados
-  const { data: usuariosAtletas } = await supabase
+  // 4. Obtener mapa de categorías de respaldo
+  const { data: categoriasData } = await supabaseAdmin
+    .from('categorias')
+    .select('id, nombre, tipo')
+  const catMap = new Map((categoriasData || []).map((c) => [c.id, c.nombre]))
+
+  // 5. Obtener todos los atletas registrados
+  const { data: usuariosAtletas } = await supabaseAdmin
     .from('usuarios')
     .select('id, nombres, cedula, rol')
-    .ilike('rol', 'atleta')
     .order('creado_en', { ascending: false })
 
   const atletasList = usuariosAtletas || []
 
-  // 4. Obtener tiempos históricos para calcular promedios
-  const { data: todosTiempos } = await supabase
+  // 6. Obtener tiempos históricos para calcular promedios
+  const { data: todosTiempos } = await supabaseAdmin
     .from('tiempos_historicos')
     .select('usuario_id, tiempo_segundos')
 
@@ -57,41 +69,99 @@ export default async function CarreraPage() {
     }
   })
 
-  // 5. Obtener participantes de la simulación activa
+  // 7. Obtener participantes de la simulación activa extrayendo explícitamente categorias (nombre)
   const partMap = new Map<
     string,
-    { heat_asignado: string | null; tiempo_resultado_segundos: number | null }
+    {
+      heat_asignado: string | null
+      salida_asignada: string | null
+      tiempo_resultado_segundos: number | null
+      categoria_id: string | null
+      categoria_nombre: string | null
+      partner_nombres: string | null
+      promedio_previo_segundos: number | null
+    }
   >()
 
   if (simulacionReciente?.id) {
-    const { data: participantes } = await supabase
+    const { data: participantes, error: partErr } = await supabaseAdmin
       .from('participantes_simulacion')
-      .select('usuario_id, heat_asignado, tiempo_resultado_segundos')
+      .select(`
+        id,
+        usuario_id,
+        heat_asignado,
+        salida_asignada,
+        tiempo_resultado_segundos,
+        promedio_previo_segundos,
+        partner_nombres,
+        categoria_id,
+        categorias:categoria_id (
+          nombre
+        ),
+        usuarios:usuario_id (
+          id,
+          nombres,
+          cedula
+        )
+      `)
       .eq('simulacion_id', simulacionReciente.id)
 
-    participantes?.forEach((p) => {
+    if (partErr) {
+      console.error('[CarreraPage] Error fetching participantes:', partErr)
+    }
+
+    const atletaIdsSet = new Set(atletasList.map((a) => a.id))
+
+    participantes?.forEach((p: any) => {
       if (p.usuario_id) {
+        const catRel = Array.isArray(p.categorias) ? p.categorias[0] : p.categorias
+        const usrRel = Array.isArray(p.usuarios) ? p.usuarios[0] : p.usuarios
+
+        // Asegurar que si el participante no estaba en usuariosAtletas, se agregue a la lista
+        if (!atletaIdsSet.has(p.usuario_id)) {
+          atletasList.push({
+            id: p.usuario_id,
+            nombres: usrRel?.nombres || 'Atleta',
+            cedula: usrRel?.cedula || undefined,
+            rol: 'atleta',
+          })
+          atletaIdsSet.add(p.usuario_id)
+        }
+
+        const catNombre = catRel?.nombre || (p.categoria_id ? catMap.get(p.categoria_id) : null) || null
+
         partMap.set(p.usuario_id, {
           heat_asignado: p.heat_asignado,
+          salida_asignada: p.salida_asignada,
           tiempo_resultado_segundos: p.tiempo_resultado_segundos,
+          categoria_id: p.categoria_id,
+          categoria_nombre: catNombre,
+          partner_nombres: p.partner_nombres || null,
+          promedio_previo_segundos: p.promedio_previo_segundos,
         })
       }
     })
   }
 
-  // 6. Mapear a formato AtletaCarrera
+  // 8. Mapear a formato AtletaCarrera con la categoría enriquecida
   const atletasCarrera: AtletaCarrera[] = atletasList.map((atleta) => {
+    const part = partMap.get(atleta.id)
     const tests = tiemposMap.get(atleta.id) || []
     const suma = tests.reduce((acc, v) => acc + v, 0)
-    const promSec = tests.length > 0 ? Math.round(suma / tests.length) : 0
-    const part = partMap.get(atleta.id)
+    const promCalculado = tests.length > 0 ? Math.round(suma / tests.length) : 0
+    const promSec =
+      typeof part?.promedio_previo_segundos === 'number' && part.promedio_previo_segundos > 0
+        ? part.promedio_previo_segundos
+        : promCalculado
 
     const resultadoSec = part?.tiempo_resultado_segundos ?? null
 
     return {
       id: atleta.id,
       nombres: atleta.nombres || 'Atleta Sin Nombre',
+      partnerNombres: part?.partner_nombres || null,
       cedula: atleta.cedula || undefined,
+      categoriaNombre: part?.categoria_nombre || null,
       heatAsignado: part?.heat_asignado || 'Sin Asignar',
       promedioSegundos: promSec,
       promedioMMSS: formatSegundosAMM_SS(promSec),

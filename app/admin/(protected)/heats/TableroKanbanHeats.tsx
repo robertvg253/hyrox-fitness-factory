@@ -1,13 +1,12 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd'
-import { autoAsignarHeats, actualizarHeatAtleta, liberarHeats } from './actions'
+import { actualizarHeatAtleta } from './actions'
 import toast from 'react-hot-toast'
 import {
   Flame,
-  Wand2,
   Users,
   Clock,
   GripVertical,
@@ -15,16 +14,19 @@ import {
   CheckCircle2,
   RefreshCw,
   Info,
-  Globe,
-  Eye,
-  EyeOff,
-  X
+  Layers,
+  Sparkles
 } from 'lucide-react'
+import { Categoria } from '@/src/types'
 
 export interface AtletaKanban {
   id: string
+  usuarioId: string
   nombres: string
   cedula?: string
+  categoriaId?: string | null
+  categoriaNombre?: string | null
+  categoriaTipo?: 'individual' | 'dupla' | null
   promedioSegundos: number
   promedioMMSS: string
   heatAsignado: string | null
@@ -37,17 +39,18 @@ interface TableroKanbanHeatsProps {
     estado: string
     heats_liberados?: boolean
   } | null
+  categorias: Categoria[]
   atletas: AtletaKanban[]
 }
 
-const HEATS = ['Heat 1', 'Heat 2', 'Heat 3', 'Heat 4', 'Heat 5', 'Heat 6'] as const
-
-export default function TableroKanbanHeats({ simulacion, atletas }: TableroKanbanHeatsProps) {
+export default function TableroKanbanHeats({
+  simulacion,
+  categorias,
+  atletas,
+}: TableroKanbanHeatsProps) {
   const router = useRouter()
   const [mounted, setMounted] = useState(false)
-  const [isAutoAssigning, setIsAutoAssigning] = useState(false)
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [isLiberando, setIsLiberando] = useState(false)
+  const [categoriaFiltro, setCategoriaFiltro] = useState<string>('TODAS')
 
   // Función para ordenar atletas de MENOR a MAYOR promedio (más rápidos arriba)
   const sortAtletasAsc = (a: AtletaKanban, b: AtletaKanban) => {
@@ -59,17 +62,30 @@ export default function TableroKanbanHeats({ simulacion, atletas }: TableroKanba
     return a.nombres.localeCompare(b.nombres)
   }
 
-  // Organizar atletas por columnas con orden interno de MENOR a MAYOR promedio
-  const buildColumns = (list: AtletaKanban[]) => {
+  // Obtener lista dinámica de todos los heats actualmente asignados, ordenados por número secuencial
+  const allAssignedHeats = useMemo(() => {
+    const set = new Set<string>()
+    atletas.forEach((a) => {
+      if (a.heatAsignado) set.add(a.heatAsignado)
+    })
+    const list = Array.from(set)
+    list.sort((a, b) => {
+      const numA = parseInt(a.match(/\d+/)?.[0] || '0', 10)
+      const numB = parseInt(b.match(/\d+/)?.[0] || '0', 10)
+      return numA - numB
+    })
+    return list
+  }, [atletas])
+
+  // Organizar atletas por columnas dinámicas con orden interno de MENOR a MAYOR promedio
+  const buildColumns = (list: AtletaKanban[], heatList: string[]) => {
     const cols: Record<string, AtletaKanban[]> = {
-      'Heat 1': [],
-      'Heat 2': [],
-      'Heat 3': [],
-      'Heat 4': [],
-      'Heat 5': [],
-      'Heat 6': [],
       sin_asignar: [],
     }
+    heatList.forEach((h) => {
+      cols[h] = []
+    })
+
     list.forEach((atleta) => {
       if (atleta.heatAsignado && cols[atleta.heatAsignado]) {
         cols[atleta.heatAsignado].push(atleta)
@@ -79,103 +95,29 @@ export default function TableroKanbanHeats({ simulacion, atletas }: TableroKanba
     })
 
     // Ordenar atletas dentro de cada Heat de menor a mayor promedio
-    HEATS.forEach((h) => {
-      cols[h].sort(sortAtletasAsc)
+    Object.keys(cols).forEach((k) => {
+      cols[k].sort(sortAtletasAsc)
     })
-    cols.sin_asignar.sort(sortAtletasAsc)
 
     return cols
   }
 
-  const [columns, setColumns] = useState<Record<string, AtletaKanban[]>>(() => buildColumns(atletas))
+  const [columns, setColumns] = useState<Record<string, AtletaKanban[]>>(() =>
+    buildColumns(atletas, allAssignedHeats)
+  )
 
   useEffect(() => {
     setMounted(true)
   }, [])
 
   useEffect(() => {
-    setColumns(buildColumns(atletas))
-  }, [atletas])
+    setColumns(buildColumns(atletas, allAssignedHeats))
+  }, [atletas, allAssignedHeats])
 
-  // Botón Asignación Automática (1 al 6): Heat 1 más rápidos, Heat 6 más lentos e incompletos
-  const handleAutoAsignar = async () => {
-    if (!simulacion?.id) {
-      toast.error('Primero debes crear o activar una simulación en el Dashboard.')
-      return
-    }
 
-    setIsAutoAssigning(true)
-    const toastId = toast.loading('Dividiendo completos de menor a mayor (Heat 1 al 6) y penalizando incompletos a Heat 6...')
 
-    try {
-      const res = await autoAsignarHeats(simulacion.id)
-      if (res.success) {
-        toast.success(
-          `¡${res.totalAsignados} atletas organizados! (${res.completosCount} completos divididos de Heat 1 a 6, ${res.incompletosCount} incompletos en Heat 6)`,
-          { id: toastId, duration: 4000 }
-        )
-        router.refresh()
-      } else {
-        toast.error(res.error || 'Error al auto-asignar heats.', { id: toastId })
-      }
-    } catch (err: any) {
-      toast.error('Error de conexión al asignar heats.', { id: toastId })
-    } finally {
-      setIsAutoAssigning(false)
-    }
-  }
 
-  // Confirmar publicación / liberación de Heats
-  const handleConfirmarLiberacion = async () => {
-    if (!simulacion?.id) {
-      toast.error('No hay simulación activa.')
-      return
-    }
-
-    setIsLiberando(true)
-    const toastId = toast.loading('Publicando heats para todos los atletas...')
-
-    try {
-      const res = await liberarHeats(simulacion.id, true)
-      if (res.success) {
-        toast.success('¡Heats liberados con éxito! Los usuarios ya pueden ver su tanda asignada.', {
-          id: toastId,
-          duration: 3500,
-        })
-        setIsModalOpen(false)
-        router.refresh()
-      } else {
-        toast.error(res.error || 'Error al liberar heats.', { id: toastId })
-      }
-    } catch (err: any) {
-      toast.error('Error de conexión al liberar heats.', { id: toastId })
-    } finally {
-      setIsLiberando(false)
-    }
-  }
-
-  // Ocultar heats a borrador (si estuviesen liberados)
-  const handleOcultarHeats = async () => {
-    if (!simulacion?.id) return
-    setIsLiberando(true)
-    const toastId = toast.loading('Cambiando a modo borrador...')
-
-    try {
-      const res = await liberarHeats(simulacion.id, false)
-      if (res.success) {
-        toast.success('Heats ocultados. Ahora están en modo borrador.', { id: toastId })
-        router.refresh()
-      } else {
-        toast.error(res.error || 'Error al ocultar heats.', { id: toastId })
-      }
-    } catch (err: any) {
-      toast.error('Error de red al ocultar heats.', { id: toastId })
-    } finally {
-      setIsLiberando(false)
-    }
-  }
-
-  // Manejo de Drag & Drop
+  // Manejo de Drag & Drop con regla estricta: sólo entre heats de la misma categoría
   const handleDragEnd = async (result: DropResult) => {
     const { source, destination, draggableId } = result
 
@@ -187,13 +129,39 @@ export default function TableroKanbanHeats({ simulacion, atletas }: TableroKanba
     const sourceCol = source.droppableId
     const destCol = destination.droppableId
 
-    const newSourceList = Array.from(columns[sourceCol] || [])
-    const [movedAtleta] = newSourceList.splice(source.index, 1)
+    // Buscar atleta arrastrado
+    const movedAtleta = atletas.find((a) => a.id === draggableId || a.usuarioId === draggableId)
     if (!movedAtleta) return
+
+    // REGLA ESTRICTA: Si el destino es un Heat, validar que pertenezca a la misma categoría del atleta
+    if (destCol !== 'sin_asignar' && movedAtleta.categoriaNombre) {
+      const catAtletaNormalizada = movedAtleta.categoriaNombre.toLowerCase().trim()
+      const destHeatNormalizado = destCol.toLowerCase().trim()
+
+      if (!destHeatNormalizado.includes(catAtletaNormalizada)) {
+        toast.error(
+          `Movimiento no permitido: ${movedAtleta.nombres} pertenece a "${movedAtleta.categoriaNombre}". Sólo puede asignarse a Heats de su categoría.`,
+          { duration: 4000 }
+        )
+        return
+      }
+    }
+
+    // Advertencia suave si el Heat de destino ya cuenta con 10 participantes
+    if (destCol !== 'sin_asignar' && (columns[destCol]?.length || 0) >= 10) {
+      toast('Aviso: Este Heat ya tiene 10 participantes (máximo recomendado alcanzado).', {
+        icon: '⚠️',
+        duration: 3000,
+      })
+    }
+
+    const newSourceList = Array.from(columns[sourceCol] || [])
+    const [removed] = newSourceList.splice(source.index, 1)
+    if (!removed) return
 
     const newDestList = sourceCol === destCol ? newSourceList : Array.from(columns[destCol] || [])
     const targetHeat = destCol === 'sin_asignar' ? null : destCol
-    const updatedMovedAtleta = { ...movedAtleta, heatAsignado: targetHeat }
+    const updatedMovedAtleta = { ...removed, heatAsignado: targetHeat }
     newDestList.splice(destination.index, 0, updatedMovedAtleta)
 
     const nextState = {
@@ -212,7 +180,7 @@ export default function TableroKanbanHeats({ simulacion, atletas }: TableroKanba
 
     // 2. Server Action en segundo plano
     try {
-      const res = await actualizarHeatAtleta(simulacion.id, draggableId, targetHeat)
+      const res = await actualizarHeatAtleta(simulacion.id, movedAtleta.usuarioId, targetHeat)
       if (!res.success) {
         toast.error(res.error || 'Error al persistir el cambio.')
         // Revertir estado si falló
@@ -225,7 +193,7 @@ export default function TableroKanbanHeats({ simulacion, atletas }: TableroKanba
           { id: `dnd-${draggableId}`, duration: 1800 }
         )
       }
-    } catch (err: any) {
+    } catch {
       toast.error('Error de red al actualizar atleta.')
       setColumns(columns)
     }
@@ -235,7 +203,14 @@ export default function TableroKanbanHeats({ simulacion, atletas }: TableroKanba
   const totalAtletas = atletas.length
   const sinAsignarCount = columns.sin_asignar?.length || 0
   const totalAsignados = totalAtletas - sinAsignarCount
-  const heatsEstanLiberados = Boolean(simulacion?.heats_liberados)
+
+  // Filtrar heats visibles según la pestaña de categoría seleccionada
+  const heatsVisibles = useMemo(() => {
+    if (categoriaFiltro === 'TODAS') return allAssignedHeats
+    return allAssignedHeats.filter((h) =>
+      h.toLowerCase().includes(categoriaFiltro.toLowerCase().trim())
+    )
+  }, [allAssignedHeats, categoriaFiltro])
 
   // SSR hydration placeholder
   if (!mounted) {
@@ -266,6 +241,12 @@ export default function TableroKanbanHeats({ simulacion, atletas }: TableroKanba
             <span className="font-bold text-emerald-400">{totalAsignados}</span>
           </div>
 
+          <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-2xl bg-zinc-900/90 border border-white/10 text-xs">
+            <Layers className="w-4 h-4 text-[#02D7E5]" />
+            <span className="text-zinc-400">Heats Generados:</span>
+            <span className="font-bold text-white">{allAssignedHeats.length}</span>
+          </div>
+
           {sinAsignarCount > 0 && (
             <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-xs">
               <AlertCircle className="w-4 h-4 text-amber-400" />
@@ -273,67 +254,51 @@ export default function TableroKanbanHeats({ simulacion, atletas }: TableroKanba
               <span className="font-bold text-amber-400">{sinAsignarCount}</span>
             </div>
           )}
-
-          {/* Estado de Publicación a Atletas */}
-          {heatsEstanLiberados ? (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold">
-              <Eye className="w-4 h-4 text-emerald-400" />
-              <span>Heats Públicos a Atletas</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-bold">
-              <EyeOff className="w-4 h-4 text-amber-400" />
-              <span>Estado: Borrador (Oculto)</span>
-            </div>
-          )}
         </div>
+      </div>
 
-        {/* Botones Principales de Acción */}
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Botón: Asignación Automática (1 al 6) */}
-          <button
-            type="button"
-            onClick={handleAutoAsignar}
-            disabled={isAutoAssigning || !simulacion}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:from-amber-400 hover:to-yellow-300 text-black font-bold text-sm shadow-lg shadow-amber-500/25 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-          >
-            {isAutoAssigning ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin text-black" />
-                <span>Asignando Heats...</span>
-              </>
-            ) : (
-              <>
-                <Wand2 className="w-4 h-4 text-black" />
-                <span>Asignación Automática (1 al 6)</span>
-              </>
-            )}
-          </button>
+      {/* Selector de Pestañas por Categoría */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
+        <button
+          type="button"
+          onClick={() => setCategoriaFiltro('TODAS')}
+          className={`shrink-0 px-4 py-2 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+            categoriaFiltro === 'TODAS'
+              ? 'bg-[#02D7E5] text-black shadow-lg shadow-[#02D7E5]/25'
+              : 'bg-zinc-900/90 text-zinc-400 hover:text-white border border-white/5'
+          }`}
+        >
+          Todos los Heats ({allAssignedHeats.length})
+        </button>
 
-          {/* Botón de Acento Cyan: Liberar Heats a Usuarios */}
-          {!heatsEstanLiberados ? (
+        {categorias.map((cat) => {
+          const isSelected = categoriaFiltro === cat.nombre
+          const countHeatsCat = allAssignedHeats.filter((h) =>
+            h.toLowerCase().includes(cat.nombre.toLowerCase().trim())
+          ).length
+
+          return (
             <button
+              key={cat.id}
               type="button"
-              onClick={() => setIsModalOpen(true)}
-              disabled={!simulacion}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-bold text-sm shadow-lg shadow-[#02D7E5]/25 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+              onClick={() => setCategoriaFiltro(cat.nombre)}
+              className={`shrink-0 flex items-center gap-2 px-4 py-2 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+                isSelected
+                  ? 'bg-[#02D7E5] text-black shadow-lg shadow-[#02D7E5]/25'
+                  : 'bg-zinc-900/90 text-zinc-400 hover:text-white border border-white/5'
+              }`}
             >
-              <Globe className="w-4 h-4 text-black" />
-              <span>Liberar Heats a Usuarios</span>
+              <span>{cat.nombre}</span>
+              <span
+                className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                  isSelected ? 'bg-black text-[#02D7E5]' : 'bg-white/10 text-zinc-300'
+                }`}
+              >
+                {countHeatsCat}
+              </span>
             </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleOcultarHeats}
-              disabled={isLiberando || !simulacion}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 font-bold text-xs active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-              title="Volver a poner los heats en modo borrador"
-            >
-              <EyeOff className="w-4 h-4 text-zinc-400" />
-              <span>Ocultar a Usuarios (Borrador)</span>
-            </button>
-          )}
-        </div>
+          )
+        })}
       </div>
 
       <DragDropContext onDragEnd={handleDragEnd}>
@@ -348,7 +313,7 @@ export default function TableroKanbanHeats({ simulacion, atletas }: TableroKanba
                 </h3>
               </div>
               <span className="text-[11px] text-zinc-400">
-                Arrastra a un atleta directamente a cualquier Heat
+                Arrastra a un atleta a cualquier Heat de su misma categoría
               </span>
             </div>
 
@@ -379,6 +344,11 @@ export default function TableroKanbanHeats({ simulacion, atletas }: TableroKanba
                             <span className="font-bold text-xs text-white max-w-[140px] truncate">
                               {atleta.nombres}
                             </span>
+                            {atleta.categoriaNombre && (
+                              <span className="px-1.5 py-0.5 rounded bg-[#02D7E5]/15 border border-[#02D7E5]/30 text-[9px] font-bold text-[#02D7E5] truncate max-w-[100px]">
+                                {atleta.categoriaNombre}
+                              </span>
+                            )}
                             <span className="px-1.5 py-0.5 rounded bg-white/10 border border-white/10 text-[10px] font-semibold text-zinc-300">
                               {atleta.promedioMMSS}
                             </span>
@@ -394,201 +364,135 @@ export default function TableroKanbanHeats({ simulacion, atletas }: TableroKanba
           </div>
         )}
 
-        {/* Tablero Kanban: Grid de 3 columnas por 2 filas (Heats 1 al 6) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {HEATS.map((heatKey, heatIndex) => {
-            const heatAtletas = columns[heatKey] || []
-            // Indicador de ritmo (Heat 1 más rápidos -> Heat 6 más lentos)
-            const ritmoTag =
-              heatIndex === 0
-                ? 'Menor Tiempo / Ritmo Élite (Más Rápidos)'
-                : heatIndex === 5
-                ? 'Mayor Tiempo / Incompletos / Ritmo Base'
-                : `Bloque ${heatIndex + 1}`
+        {/* Tablero Kanban Dinámico: Renderiza N contenedores de Heats */}
+        {heatsVisibles.length === 0 ? (
+          <div className="p-12 rounded-3xl bg-zinc-950/60 border border-white/10 text-center flex flex-col items-center justify-center space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+              <Sparkles className="w-7 h-7" />
+            </div>
+            <div className="max-w-md space-y-1">
+              <h3 className="text-base font-bold text-white">No hay Heats generados para esta vista</h3>
+              <p className="text-xs text-zinc-400">
+                Los heats se heredan automáticamente desde las preinscripciones o pueden asignarse manualmente arrastrando a los atletas a sus tandas correspondientes.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+            {heatsVisibles.map((heatKey) => {
+              const heatAtletas = columns[heatKey] || []
+              const esCapacidadCompleta = heatAtletas.length === 10
+              const esExcedido = heatAtletas.length > 10
 
-            return (
-              <div
-                key={heatKey}
-                className="flex flex-col rounded-3xl bg-zinc-950/85 border border-white/10 backdrop-blur-xl shadow-2xl"
-              >
-                {/* Cabecera del Heat */}
-                <div className="p-4 border-b border-white/10 flex items-center justify-between bg-zinc-900/40">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-[#02D7E5]/10 border border-[#02D7E5]/30 flex items-center justify-center">
-                      <Flame className="w-4 h-4 text-[#02D7E5]" />
+              return (
+                <div
+                  key={heatKey}
+                  className="flex flex-col rounded-3xl bg-zinc-950/85 border border-white/10 backdrop-blur-xl shadow-2xl"
+                >
+                  {/* Cabecera del Heat Dinámico */}
+                  <div className="p-4 border-b border-white/10 flex items-center justify-between bg-zinc-900/40">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-[#02D7E5]/10 border border-[#02D7E5]/30 flex items-center justify-center shrink-0">
+                        <Flame className="w-4 h-4 text-[#02D7E5]" />
+                      </div>
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-bold text-white tracking-tight truncate" title={heatKey}>
+                          {heatKey}
+                        </h3>
+                        <p className="text-[10px] font-semibold text-zinc-400">
+                          Máx 10 Atletas
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h3 className="text-base font-bold text-white tracking-tight">
-                        {heatKey}
-                      </h3>
-                      <p className="text-[10px] font-semibold text-zinc-400">{ritmoTag}</p>
-                    </div>
-                  </div>
 
-                  <span className="px-2.5 py-1 rounded-xl bg-white/5 border border-white/10 text-xs font-bold text-white">
-                    {heatAtletas.length} {heatAtletas.length === 1 ? 'atleta' : 'atletas'}
-                  </span>
-                </div>
-
-                {/* Zona de Drop con altura fija y scroll interno */}
-                <Droppable droppableId={heatKey}>
-                  {(provided, snapshot) => (
-                    <div
-                      ref={provided.innerRef}
-                      {...provided.droppableProps}
-                      className={`flex-1 p-3.5 h-[400px] overflow-y-auto space-y-2.5 transition-colors ${
-                        snapshot.isDraggingOver
-                          ? 'bg-[#02D7E5]/5 border-2 border-dashed border-[#02D7E5]/50'
-                          : 'bg-transparent'
+                    <span
+                      className={`px-2.5 py-1 rounded-xl border text-xs font-bold shrink-0 ${
+                        esExcedido
+                          ? 'bg-red-500/20 text-red-400 border-red-500/40'
+                          : esCapacidadCompleta
+                          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                          : 'bg-white/5 border-white/10 text-white'
                       }`}
                     >
-                      {heatAtletas.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-center p-4 border border-dashed border-white/10 rounded-2xl text-zinc-500">
-                          <Clock className="w-6 h-6 mb-2 text-zinc-600" />
-                          <p className="text-xs font-bold text-zinc-400">Sin atletas asignados</p>
-                          <p className="text-[11px] text-zinc-500 mt-0.5">
-                            Arrastra atletas aquí o usa la asignación automática
-                          </p>
-                        </div>
-                      ) : (
-                        heatAtletas.map((atleta, index) => (
-                          <Draggable key={atleta.id} draggableId={atleta.id} index={index}>
-                            {(dragProvided, dragSnapshot) => (
-                              <div
-                                ref={dragProvided.innerRef}
-                                {...dragProvided.draggableProps}
-                                {...dragProvided.dragHandleProps}
-                                className={`group p-3 rounded-2xl bg-zinc-900/90 hover:bg-zinc-800/90 border border-white/10 hover:border-amber-400/40 shadow-lg flex items-center justify-between gap-3 cursor-grab active:cursor-grabbing transition-all select-none ${
-                                  dragSnapshot.isDragging
-                                    ? 'scale-105 shadow-2xl ring-2 ring-amber-400 bg-zinc-900 z-50'
-                                    : ''
-                                }`}
-                              >
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <GripVertical className="w-4 h-4 text-zinc-600 group-hover:text-amber-400 shrink-0" />
-                                  <div className="min-w-0">
-                                    <p className="font-bold text-sm text-white truncate">
-                                      {atleta.nombres}
-                                    </p>
-                                    {atleta.cedula && (
-                                      <p className="text-[10px] text-zinc-500 truncate">
-                                        CI: {atleta.cedula}
+                      {heatAtletas.length}/10
+                    </span>
+                  </div>
+
+                  {/* Zona de Drop con altura fija y scroll interno */}
+                  <Droppable droppableId={heatKey}>
+                    {(provided, snapshot) => (
+                      <div
+                        ref={provided.innerRef}
+                        {...provided.droppableProps}
+                        className={`flex-1 p-3.5 h-[380px] overflow-y-auto space-y-2.5 transition-colors ${
+                          snapshot.isDraggingOver
+                            ? 'bg-[#02D7E5]/5 border-2 border-dashed border-[#02D7E5]/50'
+                            : 'bg-transparent'
+                        }`}
+                      >
+                        {heatAtletas.length === 0 ? (
+                          <div className="h-full flex flex-col items-center justify-center text-center p-4 border border-dashed border-white/10 rounded-2xl text-zinc-500">
+                            <Clock className="w-6 h-6 mb-2 text-zinc-600" />
+                            <p className="text-xs font-bold text-zinc-400">Sin atletas asignados</p>
+                            <p className="text-[11px] text-zinc-500 mt-0.5">
+                              Arrastra atletas de su misma categoría aquí
+                            </p>
+                          </div>
+                        ) : (
+                          heatAtletas.map((atleta, index) => (
+                            <Draggable key={atleta.id} draggableId={atleta.id} index={index}>
+                              {(dragProvided, dragSnapshot) => (
+                                <div
+                                  ref={dragProvided.innerRef}
+                                  {...dragProvided.draggableProps}
+                                  {...dragProvided.dragHandleProps}
+                                  className={`group p-3 rounded-2xl bg-zinc-900/90 hover:bg-zinc-800/90 border border-white/10 hover:border-amber-400/40 shadow-lg flex items-center justify-between gap-3 cursor-grab active:cursor-grabbing transition-all select-none ${
+                                    dragSnapshot.isDragging
+                                      ? 'scale-105 shadow-2xl ring-2 ring-amber-400 bg-zinc-900 z-50'
+                                      : ''
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <GripVertical className="w-4 h-4 text-zinc-600 group-hover:text-amber-400 shrink-0" />
+                                    <div className="min-w-0">
+                                      <p className="font-bold text-sm text-white truncate">
+                                        {atleta.nombres}
                                       </p>
-                                    )}
+                                      {atleta.cedula && (
+                                        <p className="text-[10px] text-zinc-500 truncate">
+                                          CI: {atleta.cedula}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/25">
+                                    <Clock className="w-3 h-3 text-amber-400" />
+                                    <span className="text-xs font-bold text-amber-300">
+                                      {atleta.promedioMMSS}
+                                    </span>
                                   </div>
                                 </div>
-
-                                <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/25">
-                                  <Clock className="w-3 h-3 text-amber-400" />
-                                  <span className="text-xs font-bold text-amber-300">
-                                    {atleta.promedioMMSS}
-                                  </span>
-                                </div>
-                              </div>
-                            )}
-                          </Draggable>
-                        ))
-                      )}
-                      {provided.placeholder}
-                    </div>
-                  )}
-                </Droppable>
-              </div>
-            )
-          })}
-        </div>
+                              )}
+                            </Draggable>
+                          ))
+                        )}
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </DragDropContext>
-
-      {/* DRAWER LATERAL: Liberar Heats a Usuarios (Slide-over desde la derecha) */}
-      <div
-        className={`fixed inset-0 z-50 transition-opacity duration-300 ${
-          isModalOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-        }`}
-      >
-        {/* Backdrop oscuro con blur */}
-        <div
-          onClick={() => !isLiberando && setIsModalOpen(false)}
-          className="absolute inset-0 bg-black/80 backdrop-blur-sm cursor-pointer"
-        />
-
-        {/* Panel lateral deslizante */}
-        <div
-          className={`absolute inset-y-0 right-0 w-full sm:w-96 bg-zinc-950 border-l border-white/10 shadow-2xl p-6 flex flex-col justify-between transform transition-transform duration-300 ease-in-out ${
-            isModalOpen ? 'translate-x-0' : 'translate-x-full'
-          }`}
-        >
-          <div className="space-y-6">
-            <div className="flex items-center justify-between pb-4 border-b border-white/10">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-[#02D7E5]/10 border border-[#02D7E5]/30 flex items-center justify-center text-[#02D7E5]">
-                  <Globe className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-white tracking-tight">
-                    Liberar Heats
-                  </h3>
-                  <p className="text-[11px] text-zinc-400">Publicar tandas a usuarios</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => !isLiberando && setIsModalOpen(false)}
-                className="p-1.5 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-zinc-900/70 border border-zinc-800 space-y-2 text-xs text-zinc-200 leading-relaxed">
-              <p className="font-bold text-white text-sm">
-                ¿Estás seguro que deseas liberar los heats?
-              </p>
-              <p>
-                Los usuarios podrán ver su categoría asignada tanto en su Dashboard como en el módulo de Competición.
-              </p>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-[#02D7E5]/10 border border-[#02D7E5]/20 text-xs text-[#02D7E5]">
-              💡 La largada oficial en pista solo se habilitará una vez que los heats estén liberados.
-            </div>
-          </div>
-
-          <div className="pt-6 border-t border-white/10 flex items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={() => setIsModalOpen(false)}
-              disabled={isLiberando}
-              className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs transition-colors cursor-pointer disabled:opacity-50"
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              onClick={handleConfirmarLiberacion}
-              disabled={isLiberando}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black font-bold text-xs shadow-md shadow-[#02D7E5]/20 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-            >
-              {isLiberando ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin text-black" />
-                  <span>Liberando...</span>
-                </>
-              ) : (
-                <>
-                  <Globe className="w-4 h-4 text-black" />
-                  <span>Confirmar y Liberar</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
 
       {/* Nota Explicativa Inferior */}
       <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/10 flex items-start gap-3 text-xs text-zinc-400">
         <Info className="w-4 h-4 text-[#02D7E5] shrink-0 mt-0.5" />
         <p>
-          <strong className="font-bold text-white">Lógica Matemática de Heats:</strong> Los atletas con 4 tests completos se ordenan de menor a mayor tiempo promedio (los más rápidos al <strong className="text-white">Heat 1</strong>, los más lentos al <strong className="text-white">Heat 6</strong>). Los atletas con tests incompletos (&lt; 4 tests) se penalizan asignándose de forma directa al <strong className="text-white">Heat 6</strong>. Dentro de cada Heat, los atletas se visualizan ordenados de menor a mayor promedio.
+          <strong className="font-bold text-white">Gestión Segura de Heats:</strong> Los heats asignados por la mesa técnica en las preinscripciones se preservan y protegen de sobrescrituras accidentales. Puedes ajustar atletas entre tandas arrastrando y soltando sus tarjetas dentro de su misma categoría.
         </p>
       </div>
     </div>

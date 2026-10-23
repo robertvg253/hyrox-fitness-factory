@@ -83,6 +83,7 @@ export default async function CompeticionPage() {
     simulacion_id: string
     usuario_id: string
     heat_asignado: string | null
+    salida_asignada?: string | null
     promedio_previo_segundos: number | null
     tiempo_resultado_segundos: number | null
     asistio: boolean | null
@@ -103,6 +104,7 @@ export default async function CompeticionPage() {
     : participante?.categorias?.nombre
 
   const heatAsignado = participante?.heat_asignado || null
+  const salidaAsignada = participante?.salida_asignada || null
   const estaInscrito = Boolean(participante)
   const tablaLiberada = Boolean(simulacion?.tabla_liberada)
   const heatsLiberados = Boolean(simulacion?.heats_liberados)
@@ -191,32 +193,42 @@ export default async function CompeticionPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between gap-4">
-              <div className="space-y-1">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1.5">
                 <span className="text-xs font-semibold text-zinc-400">Tanda Asignada:</span>
-                <div className="flex items-center gap-2">
-                  {heatsLiberados ? (
-                    heatAsignado ? (
-                      <div className="flex items-center gap-2">
-                        <Flame className="w-6 h-6 text-[#02D7E5]" />
-                        <h2 className="text-3xl font-bold tracking-tight text-white">
-                          {heatAsignado}
-                        </h2>
-                      </div>
-                    ) : (
-                      <h2 className="text-2xl font-bold tracking-tight text-zinc-300">
-                        Heat por asignar
-                      </h2>
-                    )
-                  ) : (
+                
+                {heatAsignado ? (
+                  <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <Clock className="w-5 h-5 text-amber-400" />
-                      <h2 className="text-xl font-bold tracking-tight text-amber-400">
-                        Pendiente de publicación
+                      <Flame className="w-7 h-7 text-[#02D7E5] shrink-0" />
+                      <h2 className="text-3xl font-black tracking-tight text-[#02D7E5]">
+                        {heatAsignado}
                       </h2>
                     </div>
-                  )}
-                </div>
+                    {salidaAsignada && (
+                      <div className="flex items-center gap-1.5 text-zinc-300 font-bold text-sm">
+                        <Clock className="w-4 h-4 text-[#02D7E5]" />
+                        <span>{salidaAsignada}</span>
+                      </div>
+                    )}
+                  </div>
+                ) : salidaAsignada ? (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-6 h-6 text-[#02D7E5] shrink-0" />
+                      <h2 className="text-3xl font-black tracking-tight text-[#02D7E5]">
+                        {salidaAsignada}
+                      </h2>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-5 h-5 text-amber-400" />
+                    <h2 className="text-xl font-bold tracking-tight text-amber-400">
+                      Pendiente de publicación
+                    </h2>
+                  </div>
+                )}
               </div>
 
               <div className="w-12 h-12 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-[#02D7E5] shrink-0">
@@ -225,13 +237,9 @@ export default async function CompeticionPage() {
             </div>
 
             <p className="text-[11px] text-zinc-400 leading-relaxed">
-              {heatsLiberados ? (
-                heatAsignado
-                  ? 'Tu heat ha sido fijado de acuerdo al promedio de tus 4 tests previos. Preséntate 30 minutos antes del inicio de tu tanda.'
-                  : 'La organización está balanceando los heats en base a los tiempos históricos de todos los competidores registrados.'
-              ) : (
-                'La asignación de heats se encuentra en proceso de balanceo técnico oficial. La lista definitiva será publicada en breve.'
-              )}
+              {heatAsignado
+                ? 'Tu tanda y horario de salida han sido asignados de acuerdo al cronograma oficial. Preséntate con anticipación para el calentamiento y briefing de tu tanda.'
+                : 'La asignación de heats y horarios de salida se encuentra en proceso de balanceo técnico oficial.'}
             </p>
           </div>
         </div>
@@ -267,7 +275,7 @@ export default async function CompeticionPage() {
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold uppercase text-zinc-500">Fecha del Evento</span>
                 <span className="text-xs font-bold text-zinc-200">
-                  Sábado, 28 de Noviembre de 2026
+                  Sábado, 24 de Octubre
                 </span>
               </div>
             </div>
@@ -279,7 +287,7 @@ export default async function CompeticionPage() {
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold uppercase text-zinc-500">Hora de Inicio</span>
                 <span className="text-xs font-bold text-zinc-200">
-                  07:30 AM — Apertura y Briefing Oficial
+                  2:00 PM - Apertura y Briefing Oficial
                 </span>
               </div>
             </div>
@@ -291,7 +299,7 @@ export default async function CompeticionPage() {
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold uppercase text-zinc-500">Ubicación</span>
                 <span className="text-xs font-bold text-zinc-200">
-                  Arena Hyrox Central — Pista y Estaciones
+                  Fitness Factory sede Los Palos Grandes
                 </span>
               </div>
             </div>

@@ -95,14 +95,16 @@ export default async function DashboardPage() {
     .maybeSingle()
 
   let heatAsignado: string | null = null
+  let salidaAsignada: string | null = null
   if (simulacionReciente?.id) {
     const { data: participacion } = await supabase
       .from('participantes_simulacion')
-      .select('heat_asignado')
+      .select('heat_asignado, salida_asignada')
       .eq('simulacion_id', simulacionReciente.id)
       .eq('usuario_id', user.id)
       .maybeSingle()
     heatAsignado = participacion?.heat_asignado || null
+    salidaAsignada = participacion?.salida_asignada || null
   }
 
   // Atributos del atleta
@@ -197,21 +199,23 @@ export default async function DashboardPage() {
                 </span>
               </div>
 
-              {heatsLiberados ? (
-                heatAsignado ? (
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-[#02D7E5]/20 to-cyan-500/10 border border-[#02D7E5]/40 text-[#02D7E5] font-bold text-xs shadow-sm">
-                    <Flame className="w-3.5 h-3.5 text-[#02D7E5]" />
-                    <span>{heatAsignado}</span>
-                  </div>
-                ) : (
-                  <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-400 font-semibold text-[11px]">
-                    <span>Heat: Por asignar</span>
-                  </div>
-                )
+              {heatAsignado ? (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-[#02D7E5]/20 to-cyan-500/10 border border-[#02D7E5]/40 text-[#02D7E5] font-bold text-xs shadow-sm">
+                  <Flame className="w-3.5 h-3.5 text-[#02D7E5]" />
+                  <span>{heatAsignado}</span>
+                  {salidaAsignada && (
+                    <span className="text-zinc-300 font-semibold">• {salidaAsignada}</span>
+                  )}
+                </div>
+              ) : salidaAsignada ? (
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-[#02D7E5]/20 to-cyan-500/10 border border-[#02D7E5]/40 text-[#02D7E5] font-bold text-xs shadow-sm">
+                  <Clock className="w-3.5 h-3.5 text-[#02D7E5]" />
+                  <span>{salidaAsignada}</span>
+                </div>
               ) : (
                 <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 font-semibold text-[11px]">
                   <Clock className="w-3 h-3 text-amber-400" />
-                  <span>Heat: Pendiente de publicación</span>
+                  <span>Pendiente de publicación</span>
                 </div>
               )}
             </div>
@@ -385,11 +389,26 @@ export default async function DashboardPage() {
               {simulacionReciente?.nombre || 'Simulación Hyrox Factory'}
             </h2>
 
-            {heatsLiberados ? (
+            {heatAsignado ? (
+              <div className="space-y-1">
+                <p className="text-sm text-zinc-100 font-semibold flex items-center gap-2">
+                  <span>Asignado al</span>
+                  <span className="px-2.5 py-0.5 rounded-lg bg-[#02D7E5]/20 text-[#02D7E5] border border-[#02D7E5]/40 font-bold text-sm">
+                    {heatAsignado}
+                  </span>
+                </p>
+                {salidaAsignada && (
+                  <p className="text-xs text-zinc-300 font-semibold flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-[#02D7E5]" />
+                    <span>{salidaAsignada}</span>
+                  </p>
+                )}
+              </div>
+            ) : salidaAsignada ? (
               <p className="text-sm text-zinc-100 font-semibold flex items-center gap-2">
-                <span>Asignado al</span>
-                <span className="px-2.5 py-0.5 rounded-lg bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 font-bold text-sm">
-                  {heatAsignado || 'Heat por asignar'}
+                <span>Horario de Salida:</span>
+                <span className="px-2.5 py-0.5 rounded-lg bg-[#02D7E5]/20 text-[#02D7E5] border border-[#02D7E5]/40 font-bold text-sm">
+                  {salidaAsignada}
                 </span>
               </p>
             ) : (
@@ -402,13 +421,9 @@ export default async function DashboardPage() {
           <div className="pt-2">
             <Link
               href="/dashboard/competicion"
-              className={`inline-flex items-center gap-2 px-5 py-3 rounded-2xl font-extrabold text-sm shadow-xl active:scale-[0.98] transition-all ${
-                heatsLiberados
-                  ? 'bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black shadow-[#02D7E5]/30'
-                  : 'bg-white/10 hover:bg-white/20 text-white border border-white/20'
-              }`}
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl font-extrabold text-sm shadow-xl active:scale-[0.98] transition-all bg-[#02D7E5] hover:bg-[#02D7E5]/90 text-black shadow-[#02D7E5]/30"
             >
-              <span>{heatsLiberados ? 'Ver mi categoría completa ->' : 'Ver más detalles'}</span>
+              <span>{heatAsignado ? 'Ver detalles de mi tanda' : 'Ver más detalles'}</span>
               <ArrowRight className="w-4 h-4" />
             </Link>
           </div>

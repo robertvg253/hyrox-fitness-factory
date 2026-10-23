@@ -1,8 +1,10 @@
 import { createClient } from '@/src/utils/supabase/server'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import LeaderboardOficialClient, { AtletaLeaderboardItem } from './LeaderboardOficialClient'
-import { Trophy, ShieldCheck, ArrowLeft, AlertCircle } from 'lucide-react'
+import { ShieldCheck, ArrowLeft, AlertCircle } from 'lucide-react'
+import { Categoria } from '@/src/types'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -28,7 +30,7 @@ function formatDiferencia(diffSec: number | null): string {
 export default async function LeaderboardPage() {
   const supabase = await createClient()
 
-  // 1. Validar autenticación
+  // 1. Validar autenticación de administrador
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -37,25 +39,31 @@ export default async function LeaderboardPage() {
     redirect('/admin/login')
   }
 
-  // 2. Obtener simulación activa o más reciente
-  const { data: simulacionReciente } = await supabase
+  // 2. Cliente con permisos de administración (Service Role) para evitar bloqueos por RLS
+  const supabaseAdmin = createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
+
+  // 3. Obtener simulación activa o más reciente
+  const { data: simulacionReciente } = await supabaseAdmin
     .from('simulaciones')
     .select('id, nombre, estado, tabla_liberada, heats_liberados, fecha_creacion')
     .order('fecha_creacion', { ascending: false })
     .limit(1)
     .maybeSingle()
 
-  // 3. Obtener todos los atletas registrados
-  const { data: usuariosAtletas } = await supabase
-    .from('usuarios')
-    .select('id, nombres, cedula, rol')
-    .ilike('rol', 'atleta')
-    .order('creado_en', { ascending: false })
+  // 4. Obtener todas las categorías oficiales
+  const { data: categoriasData } = await supabaseAdmin
+    .from('categorias')
+    .select('id, nombre, tipo')
+    .order('nombre', { ascending: true })
 
-  const atletasList = usuariosAtletas || []
+  const categorias: Categoria[] = (categoriasData || []) as Categoria[]
+  const catMap = new Map(categorias.map((c) => [c.id, c]))
 
-  // 4. Obtener tiempos históricos para calcular promedios
-  const { data: todosTiempos } = await supabase
+  // 5. Obtener tiempos históricos para calcular promedios previos de respaldo
+  const { data: todosTiempos } = await supabaseAdmin
     .from('tiempos_historicos')
     .select('usuario_id, tiempo_segundos')
 
@@ -68,81 +76,117 @@ export default async function LeaderboardPage() {
     }
   })
 
-  // 5. Obtener participantes de la simulación activa
-  const partMap = new Map<
-    string,
-    { id: string; heat_asignado: string | null; tiempo_resultado_segundos: number | null }
-  >()
+  // 6. Consultar directamente los participantes de la simulación activa con JOIN a categorias y usuarios
+  let rawItems: AtletaLeaderboardItem[] = []
 
   if (simulacionReciente?.id) {
-    const { data: participantes } = await supabase
+    const { data: participantes, error: partError } = await supabaseAdmin
       .from('participantes_simulacion')
-      .select('id, usuario_id, heat_asignado, tiempo_resultado_segundos')
+      .select(`
+        id,
+        simulacion_id,
+        usuario_id,
+        heat_asignado,
+        salida_asignada,
+        tiempo_resultado_segundos,
+        promedio_previo_segundos,
+        partner_nombres,
+        categoria_id,
+        categorias:categoria_id (
+          id,
+          nombre,
+          tipo
+        ),
+        usuarios:usuario_id (
+          id,
+          nombres,
+          cedula,
+          email
+        )
+      `)
       .eq('simulacion_id', simulacionReciente.id)
 
-    participantes?.forEach((p) => {
-      if (p.usuario_id) {
-        partMap.set(p.usuario_id, {
-          id: p.id,
-          heat_asignado: p.heat_asignado,
-          tiempo_resultado_segundos: p.tiempo_resultado_segundos,
-        })
+    if (partError) {
+      console.error('[LeaderboardPage] Error en consulta de participantes_simulacion:', partError)
+    }
+
+    // Mapa de usuarios de respaldo por si el join de Supabase falla silenciosamente
+    const userIds = (participantes || []).map((p) => p.usuario_id).filter(Boolean)
+    const usuariosMap = new Map<string, { id: string; nombres: string; cedula?: string }>()
+    if (userIds.length > 0) {
+      const { data: directUsers } = await supabaseAdmin
+        .from('usuarios')
+        .select('id, nombres, cedula')
+        .in('id', userIds)
+      directUsers?.forEach((u) => usuariosMap.set(u.id, u))
+    }
+
+    rawItems = (participantes || []).map((p: any) => {
+      // Extracción defensiva ante posibles arrays u objetos según vista de Supabase
+      const catRel = Array.isArray(p.categorias) ? p.categorias[0] : p.categorias
+      const usrRel = Array.isArray(p.usuarios) ? p.usuarios[0] : p.usuarios
+
+      const catId = p.categoria_id || catRel?.id || null
+      const catObj = catId ? catMap.get(catId) || catRel : catRel
+
+      const usrFallback = p.usuario_id ? usuariosMap.get(p.usuario_id) : null
+      const nombreAtleta = usrRel?.nombres || usrFallback?.nombres || 'Atleta Sin Nombre'
+      const cedulaAtleta = usrRel?.cedula || usrFallback?.cedula || undefined
+
+      // Nombre y Tipo de Categoría extraídos directamente del objeto anidado o mapa de respaldo
+      const categoriaNombre = (catRel?.nombre || catObj?.nombre || '').trim() || null
+      const tipoRaw = (catRel?.tipo || catObj?.tipo || '').toLowerCase().trim()
+      const nombreNorm = (categoriaNombre || '').toLowerCase().trim()
+
+      let categoriaTipo: 'individual' | 'dupla' = 'individual'
+      if (
+        tipoRaw === 'dupla' ||
+        tipoRaw === 'duplas' ||
+        nombreNorm.includes('dupla') ||
+        Boolean(p.partner_nombres?.trim())
+      ) {
+        categoriaTipo = 'dupla'
+      } else {
+        categoriaTipo = 'individual'
+      }
+
+      // Cálculo de promedio: usar promedio_previo_segundos de la fila o calcular desde historial
+      const tests = p.usuario_id ? tiemposMap.get(p.usuario_id) || [] : []
+      const suma = tests.reduce((acc, v) => acc + v, 0)
+      const promCalculado = tests.length > 0 ? Math.round(suma / tests.length) : 0
+      const promSec =
+        typeof p.promedio_previo_segundos === 'number' && p.promedio_previo_segundos > 0
+          ? p.promedio_previo_segundos
+          : promCalculado
+
+      const resultadoSec =
+        typeof p.tiempo_resultado_segundos === 'number' && p.tiempo_resultado_segundos > 0
+          ? p.tiempo_resultado_segundos
+          : null
+
+      const diff = resultadoSec !== null && promSec > 0 ? resultadoSec - promSec : null
+
+      return {
+        id: p.id,
+        usuarioId: p.usuario_id,
+        posicion: null,
+        nombres: nombreAtleta,
+        partnerNombres: p.partner_nombres ? p.partner_nombres.trim() : null,
+        cedula: cedulaAtleta,
+        categoriaId: catId ? catId.trim() : null,
+        categoriaNombre: categoriaNombre,
+        categoriaTipo: categoriaTipo,
+        heatAsignado: p.heat_asignado ? p.heat_asignado.trim() : 'Sin Asignar',
+        salidaAsignada: p.salida_asignada ? p.salida_asignada.trim() : null,
+        promedioSegundos: promSec,
+        promedioMMSS: formatSegundosAMM_SS(promSec),
+        tiempoResultadoSegundos: resultadoSec,
+        tiempoResultadoMMSS: resultadoSec ? formatSegundosAMM_SS(resultadoSec) : null,
+        diferenciaSegundos: diff,
+        diferenciaTexto: formatDiferencia(diff),
       }
     })
   }
-
-  // 6. Mapear datos sin ordenar
-  const rawItems: AtletaLeaderboardItem[] = atletasList.map((atleta) => {
-    const tests = tiemposMap.get(atleta.id) || []
-    const suma = tests.reduce((acc, v) => acc + v, 0)
-    const promSec = tests.length > 0 ? Math.round(suma / tests.length) : 0
-    const part = partMap.get(atleta.id)
-
-    const resultadoSec =
-      typeof part?.tiempo_resultado_segundos === 'number' && part.tiempo_resultado_segundos > 0
-        ? part.tiempo_resultado_segundos
-        : null
-
-    const diff = resultadoSec && promSec > 0 ? resultadoSec - promSec : null
-
-    return {
-      id: part?.id || atleta.id,
-      usuarioId: atleta.id,
-      posicion: null,
-      nombres: atleta.nombres || 'Atleta Sin Nombre',
-      cedula: atleta.cedula || undefined,
-      heatAsignado: part?.heat_asignado || 'Sin Asignar',
-      promedioSegundos: promSec,
-      promedioMMSS: formatSegundosAMM_SS(promSec),
-      tiempoResultadoSegundos: resultadoSec,
-      tiempoResultadoMMSS: resultadoSec ? formatSegundosAMM_SS(resultadoSec) : null,
-      diferenciaSegundos: diff,
-      diferenciaTexto: formatDiferencia(diff),
-    }
-  })
-
-  // 7. Ordenar de MENOR a MAYOR tiempo oficial (los más rápidos primero)
-  // Solo se ordenan los tiempos válidos (> 0). Los demás van obligatoriamente al final como DNF.
-  const conTiempo = rawItems.filter(
-    (i) => typeof i.tiempoResultadoSegundos === 'number' && i.tiempoResultadoSegundos > 0
-  )
-  conTiempo.sort((a, b) => (a.tiempoResultadoSegundos || 0) - (b.tiempoResultadoSegundos || 0))
-
-  // Asignar posición secuencial (1, 2, 3...) ÚNICAMENTE a los atletas con tiempo válido
-  conTiempo.forEach((item, index) => {
-    item.posicion = index + 1
-  })
-
-  // Atletas sin tiempo o nulos: al fondo de la tabla con posición null (DNF)
-  const sinTiempo = rawItems.filter(
-    (i) => i.tiempoResultadoSegundos === null || i.tiempoResultadoSegundos <= 0
-  )
-  sinTiempo.forEach((item) => {
-    item.posicion = null
-  })
-  sinTiempo.sort((a, b) => a.nombres.localeCompare(b.nombres))
-
-  const itemsOrdenados = [...conTiempo, ...sinTiempo]
 
   return (
     <div className="p-6 md:p-8 space-y-8 max-w-7xl mx-auto">
@@ -167,7 +211,7 @@ export default async function LeaderboardPage() {
             Leaderboard Oficial de Competición
           </h1>
           <p className="text-xs text-zinc-400 mt-1">
-            Ranking general ordenado por tiempos oficiales y panel de publicación de resultados a usuarios.
+            Clasificaciones segmentadas por categoría y tablas generales (Overalls) con publicación de resultados a usuarios.
           </p>
         </div>
 
@@ -206,7 +250,8 @@ export default async function LeaderboardPage() {
             estado: simulacionReciente.estado,
             tabla_liberada: Boolean(simulacionReciente.tabla_liberada),
           }}
-          items={itemsOrdenados}
+          categorias={categorias}
+          items={rawItems}
         />
       )}
     </div>

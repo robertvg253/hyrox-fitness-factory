@@ -49,22 +49,15 @@ export async function arrancarSimulacion(simulacionId: string) {
   try {
     const supabaseAdmin = getAdminClient()
 
-    // 1. Validar que la simulación exista y tenga heats_liberados === true
+    // 1. Validar que la simulación exista
     const { data: sim, error: errFetch } = await supabaseAdmin
       .from('simulaciones')
-      .select('id, heats_liberados, estado')
+      .select('id, estado')
       .eq('id', simulacionId)
       .single()
 
     if (errFetch || !sim) {
       return { success: false, error: 'Simulación no encontrada.' }
-    }
-
-    if (!sim.heats_liberados) {
-      return {
-        success: false,
-        error: 'No se puede arrancar la competición. Debes liberar los heats a los atletas primero.'
-      }
     }
 
     // 2. Cambiar estado a EN_CURSO

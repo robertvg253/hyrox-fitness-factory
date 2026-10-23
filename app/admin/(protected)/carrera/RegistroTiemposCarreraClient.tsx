@@ -12,7 +12,6 @@ import toast from 'react-hot-toast'
 import {
   Play,
   CheckCircle2,
-  AlertCircle,
   Pencil,
   Loader2,
   Flame,
@@ -29,7 +28,9 @@ import {
 export interface AtletaCarrera {
   id: string
   nombres: string
+  partnerNombres?: string | null
   cedula?: string
+  categoriaNombre?: string | null
   heatAsignado: string
   promedioMMSS: string
   promedioSegundos: number
@@ -42,7 +43,7 @@ interface CarreraClientProps {
     id: string
     nombre: string
     estado: string // 'PENDIENTE' | 'EN_CURSO' | 'FINALIZADA'
-    heats_liberados: boolean
+    heats_liberados?: boolean
   } | null
   atletas: AtletaCarrera[]
 }
@@ -160,17 +161,29 @@ function AtletaRowItem({
           #{index + 1}
         </span>
 
-        <div className="min-w-0 space-y-0.5">
-          <p className="font-bold text-sm text-white truncate">
-            {atleta.nombres}
-          </p>
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-bold text-sm text-white truncate">
+              {atleta.nombres}
+              {atleta.partnerNombres && (
+                <span className="text-[#02D7E5] font-semibold text-xs ml-1.5">
+                  & {atleta.partnerNombres}
+                </span>
+              )}
+            </p>
+            {atleta.categoriaNombre && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[10px] font-bold bg-[#02D7E5]/10 text-[#02D7E5] border border-[#02D7E5]/30 tracking-wide uppercase shrink-0">
+                {atleta.categoriaNombre}
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-2.5 text-xs text-zinc-400">
             {atleta.cedula && (
               <span className="text-[11px] text-zinc-500">
                 CI: {atleta.cedula}
               </span>
             )}
-            <span className="text-[11px] text-zinc-500">•</span>
+            {atleta.cedula && <span className="text-[11px] text-zinc-600">•</span>}
             <span className="text-[11px] text-zinc-400">
               Promedio previo:{' '}
               <strong className="text-zinc-300 font-bold">
@@ -334,6 +347,8 @@ export default function RegistroTiemposCarreraClient({
     const matchBusqueda =
       !busqueda ||
       a.nombres.toLowerCase().includes(busqueda.toLowerCase()) ||
+      (a.partnerNombres && a.partnerNombres.toLowerCase().includes(busqueda.toLowerCase())) ||
+      (a.categoriaNombre && a.categoriaNombre.toLowerCase().includes(busqueda.toLowerCase())) ||
       (a.cedula && a.cedula.includes(busqueda))
     return matchHeat && matchBusqueda
   })
@@ -390,17 +405,8 @@ export default function RegistroTiemposCarreraClient({
             <button
               type="button"
               onClick={() => setDrawerArrancarOpen(true)}
-              disabled={!simulacion.heats_liberados}
-              className={`inline-flex items-center gap-2 px-6 py-3 rounded-2xl font-bold text-sm shadow-xl transition-all cursor-pointer ${
-                simulacion.heats_liberados
-                  ? 'bg-gradient-to-r from-emerald-500 to-emerald-400 hover:from-emerald-400 hover:to-emerald-300 text-black shadow-emerald-500/25 active:scale-95'
-                  : 'bg-zinc-800 text-zinc-500 border border-zinc-700 cursor-not-allowed opacity-60'
-              }`}
-              title={
-                !simulacion.heats_liberados
-                  ? 'Debes liberar los heats antes de iniciar la carrera'
-                  : 'Dar largada oficial a la competición'
-              }
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-400 hover:from-emerald-400 hover:to-emerald-300 text-black font-bold text-sm shadow-xl shadow-emerald-500/25 active:scale-95 transition-all cursor-pointer"
+              title="Dar largada oficial a la competición"
             >
               <Play className="w-4 h-4 fill-current" />
               <span>Arrancar Simulación</span>
@@ -432,35 +438,6 @@ export default function RegistroTiemposCarreraClient({
           )}
         </div>
       </div>
-
-      {/* Alerta de Pista Bloqueada si estado es PENDIENTE */}
-      {simulacion?.estado === 'PENDIENTE' && (
-        <div className="p-4 md:p-5 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-            <div>
-              <h3 className="text-sm font-bold text-white">
-                Pista Bloqueada para Registro
-              </h3>
-              <p className="text-xs text-zinc-300 mt-0.5">
-                {!simulacion.heats_liberados
-                  ? 'Primero debes liberar los heats en el módulo de Heats para poder dar la largada a la competición.'
-                  : 'Presiona "Arrancar Simulación" arriba para habilitar la pista y los inputs de tiempos.'}
-              </p>
-            </div>
-          </div>
-
-          {!simulacion.heats_liberados && (
-            <Link
-              href="/admin/heats"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shrink-0 transition-colors"
-            >
-              <span>Ir a Gestión de Heats</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
-          )}
-        </div>
-      )}
 
       {/* 2. Barra de Métricas y Filtros por Heat */}
       <div className="p-4 md:p-5 rounded-3xl bg-zinc-950/70 border border-white/10 backdrop-blur-xl space-y-4">
@@ -653,7 +630,7 @@ export default function RegistroTiemposCarreraClient({
             </div>
 
             <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-300">
-              ✓ Todos los heats se encuentran liberados y visibles para los atletas.
+              ✓ Los atletas y heats asignados se encuentran listos para la largada.
             </div>
           </div>
 

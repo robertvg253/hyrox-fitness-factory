@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { toggleTablaLiberada } from '../dashboard/actions'
 import toast from 'react-hot-toast'
@@ -14,20 +14,28 @@ import {
   TrendingDown,
   TrendingUp,
   Minus,
-  CheckCircle2,
-  AlertCircle,
   Eye,
   EyeOff,
-  X
+  X,
+  Users,
+  User,
+  Medal,
+  Layers
 } from 'lucide-react'
+import { Categoria } from '@/src/types'
 
 export interface AtletaLeaderboardItem {
   id: string
   usuarioId: string
   posicion: number | null
   nombres: string
+  partnerNombres?: string | null
   cedula?: string
+  categoriaId?: string | null
+  categoriaNombre?: string | null
+  categoriaTipo?: 'individual' | 'dupla' | null
   heatAsignado: string
+  salidaAsignada?: string | null
   promedioMMSS: string
   promedioSegundos: number
   tiempoResultadoMMSS: string | null
@@ -43,20 +51,157 @@ interface LeaderboardClientProps {
     estado: string
     tabla_liberada: boolean
   } | null
+  categorias: Categoria[]
   items: AtletaLeaderboardItem[]
+}
+
+function toTitleCase(str: string): string {
+  return str
+    .toLowerCase()
+    .split(' ')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
 }
 
 export default function LeaderboardOficialClient({
   simulacion,
-  items
+  categorias,
+  items,
 }: LeaderboardClientProps) {
   const router = useRouter()
+  const [activeTab, setActiveTab] = useState<string>('overall_individual')
   const [busqueda, setBusqueda] = useState('')
   const [heatFiltro, setHeatFiltro] = useState('TODOS')
   const [modalLiberar, setModalLiberar] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
 
   const tablaLiberada = Boolean(simulacion?.tabla_liberada)
+
+  // 1. Filtrar atletas según la pestaña activa
+  const itemsPorTab = useMemo(() => {
+    const tabKey = (activeTab || '').toLowerCase().trim()
+
+    if (tabKey === 'overall_individual') {
+      return items.filter((i) => {
+        const tipo = i.categoriaTipo?.toLowerCase().trim()
+        const nombre = i.categoriaNombre?.toLowerCase().trim() || ''
+        return tipo === 'individual' || (!tipo && !nombre.includes('dupla') && !i.partnerNombres)
+      })
+    }
+
+    if (tabKey === 'overall_dupla' || tabKey === 'overall_duplas') {
+      return items.filter((i) => {
+        const tipo = i.categoriaTipo?.toLowerCase().trim()
+        const nombre = i.categoriaNombre?.toLowerCase().trim() || ''
+        return tipo === 'dupla' || tipo === 'duplas' || nombre.includes('dupla') || Boolean(i.partnerNombres?.trim())
+      })
+    }
+
+    // Tab de Categoría específica por ID o Nombre
+    const selectedCat = categorias.find((c) => {
+      const cId = c.id?.toLowerCase().trim()
+      const cNombre = c.nombre?.toLowerCase().trim()
+      return cId === tabKey || cNombre === tabKey
+    })
+
+    return items.filter((i) => {
+      const iCatId = i.categoriaId?.toLowerCase().trim()
+      const iCatNombre = i.categoriaNombre?.toLowerCase().trim()
+
+      if (iCatId && iCatId === tabKey) return true
+      if (selectedCat && iCatId && iCatId === selectedCat.id?.toLowerCase().trim()) return true
+      if (iCatNombre && iCatNombre === tabKey) return true
+      if (selectedCat && iCatNombre && iCatNombre === selectedCat.nombre?.toLowerCase().trim()) return true
+      return false
+    })
+  }, [items, activeTab, categorias])
+
+  // 2. Ranking estricto para la pestaña activa:
+  // Tiempos válidos (> 0) ordenados de menor a mayor con posiciones relativas 1, 2, 3...
+  // Tiempos nulos/0 al final como DNF
+  const itemsRankeados = useMemo(() => {
+    const conTiempo = itemsPorTab.filter(
+      (i) => typeof i.tiempoResultadoSegundos === 'number' && i.tiempoResultadoSegundos > 0
+    )
+    conTiempo.sort((a, b) => (a.tiempoResultadoSegundos || 0) - (b.tiempoResultadoSegundos || 0))
+
+    const rankeadosConPos = conTiempo.map((item, index) => ({
+      ...item,
+      posicion: index + 1,
+    }))
+
+    const sinTiempo = itemsPorTab
+      .filter((i) => i.tiempoResultadoSegundos === null || i.tiempoResultadoSegundos <= 0)
+      .map((item) => ({
+        ...item,
+        posicion: null,
+      }))
+    sinTiempo.sort((a, b) => a.nombres.localeCompare(b.nombres))
+
+    return [...rankeadosConPos, ...sinTiempo]
+  }, [itemsPorTab])
+
+  // 3. Heats dinámicos disponibles en el tab activo
+  const heatsEnTab = useMemo(() => {
+    const set = new Set<string>()
+    itemsPorTab.forEach((i) => {
+      if (i.heatAsignado && i.heatAsignado !== 'Sin Asignar') {
+        set.add(i.heatAsignado)
+      }
+    })
+    const list = Array.from(set)
+    list.sort((a, b) => {
+      const numA = parseInt(a.match(/\d+/)?.[0] || '0', 10)
+      const numB = parseInt(b.match(/\d+/)?.[0] || '0', 10)
+      return numA - numB
+    })
+    return ['TODOS', ...list]
+  }, [itemsPorTab])
+
+  // 4. Filtrar por búsqueda y Heat
+  const itemsFiltrados = useMemo(() => {
+    return itemsRankeados.filter((item) => {
+      const matchHeat = heatFiltro === 'TODOS' || item.heatAsignado === heatFiltro
+      const matchBusqueda =
+        !busqueda ||
+        item.nombres.toLowerCase().includes(busqueda.toLowerCase()) ||
+        (item.partnerNombres && item.partnerNombres.toLowerCase().includes(busqueda.toLowerCase())) ||
+        (item.cedula && item.cedula.includes(busqueda))
+      return matchHeat && matchBusqueda
+    })
+  }, [itemsRankeados, heatFiltro, busqueda])
+
+  // Cambiar pestaña activa y resetear filtro de heat
+  const handleTabChange = (tabKey: string) => {
+    setActiveTab(tabKey)
+    setHeatFiltro('TODOS')
+  }
+
+  // Título y descripción dinámicos según el tab
+  const tabMetadata = useMemo(() => {
+    const tabKey = (activeTab || '').toLowerCase().trim()
+    if (tabKey === 'overall_individual') {
+      return {
+        titulo: 'Overall Individual',
+        descripcion: 'Clasificación unificada de todos los atletas participantes en categorías individuales.',
+      }
+    }
+    if (tabKey === 'overall_dupla' || tabKey === 'overall_duplas') {
+      return {
+        titulo: 'Overall Duplas',
+        descripcion: 'Clasificación unificada de todas las parejas y atletas en categorías de duplas.',
+      }
+    }
+    const cat = categorias.find((c) => {
+      const cId = c.id?.toLowerCase().trim()
+      const cNombre = c.nombre?.toLowerCase().trim()
+      return cId === tabKey || cNombre === tabKey
+    })
+    return {
+      titulo: cat ? toTitleCase(cat.nombre) : 'Categoría',
+      descripcion: `Ranking oficial exclusivo para la categoría ${cat ? toTitleCase(cat.nombre) : ''}.`,
+    }
+  }, [activeTab, categorias])
 
   // Confirmar liberación de la tabla
   const handleConfirmarLiberacion = async () => {
@@ -68,7 +213,7 @@ export default function LeaderboardOficialClient({
       if (res.success) {
         toast.success('¡Tabla de posiciones liberada y visible para todos los usuarios!', {
           id: toastId,
-          duration: 3500
+          duration: 3500,
         })
         setModalLiberar(false)
         router.refresh()
@@ -91,7 +236,7 @@ export default function LeaderboardOficialClient({
       const res = await toggleTablaLiberada(simulacion.id, false)
       if (res.success) {
         toast.success('Tabla de posiciones ocultada. Ahora está en modo privado.', {
-          id: toastId
+          id: toastId,
         })
         router.refresh()
       } else {
@@ -104,28 +249,21 @@ export default function LeaderboardOficialClient({
     }
   }
 
-  // Filtrado de atletas y ordenamiento estricto: tiempos válidos primero (menor a mayor), nulos al final como DNF
-  const itemsFiltrados = items
-    .filter((item) => {
-      const matchHeat = heatFiltro === 'TODOS' || item.heatAsignado === heatFiltro
-      const matchBusqueda =
-        !busqueda ||
-        item.nombres.toLowerCase().includes(busqueda.toLowerCase()) ||
-        (item.cedula && item.cedula.includes(busqueda))
-      return matchHeat && matchBusqueda
-    })
-    .sort((a, b) => {
-      const aValido = typeof a.tiempoResultadoSegundos === 'number' && a.tiempoResultadoSegundos > 0
-      const bValido = typeof b.tiempoResultadoSegundos === 'number' && b.tiempoResultadoSegundos > 0
-      if (aValido && bValido) {
-        return (a.tiempoResultadoSegundos || 0) - (b.tiempoResultadoSegundos || 0)
-      }
-      if (aValido && !bValido) return -1
-      if (!aValido && bValido) return 1
-      return a.nombres.localeCompare(b.nombres)
-    })
+  const countIndiv = useMemo(() => {
+    return items.filter((i) => {
+      const tipo = i.categoriaTipo?.toLowerCase().trim()
+      const nombre = i.categoriaNombre?.toLowerCase().trim() || ''
+      return tipo === 'individual' || (!tipo && !nombre.includes('dupla') && !i.partnerNombres)
+    }).length
+  }, [items])
 
-  const totalConTiempo = items.filter((i) => i.tiempoResultadoSegundos !== null).length
+  const countDupla = useMemo(() => {
+    return items.filter((i) => {
+      const tipo = i.categoriaTipo?.toLowerCase().trim()
+      const nombre = i.categoriaNombre?.toLowerCase().trim() || ''
+      return tipo === 'dupla' || tipo === 'duplas' || nombre.includes('dupla') || Boolean(i.partnerNombres?.trim())
+    }).length
+  }, [items])
 
   return (
     <div className="space-y-6">
@@ -151,10 +289,10 @@ export default function LeaderboardOficialClient({
           </div>
 
           <h2 className="text-2xl font-bold text-white tracking-tight">
-            Clasificación General — {simulacion?.nombre || 'Competición'}
+            {tabMetadata.titulo} — {simulacion?.nombre || 'Competición'}
           </h2>
           <p className="text-xs text-zinc-400">
-            Atletas clasificados de menor a mayor tiempo oficial en pista. Los atletas sin tiempo registrado se listan al final como DNF.
+            {tabMetadata.descripcion} Atletas clasificados de menor a mayor tiempo oficial en pista.
           </p>
         </div>
 
@@ -184,18 +322,107 @@ export default function LeaderboardOficialClient({
         </div>
       </div>
 
-      {/* 2. Filtros y Búsqueda */}
+      {/* 2. Sistema de Navegación por Pestañas (Tabs) */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none border-b border-zinc-900 pt-1">
+        {/* Tab 1: Overall Individual */}
+        <button
+          type="button"
+          onClick={() => handleTabChange('overall_individual')}
+          className={`shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'overall_individual'
+              ? 'bg-[#02D7E5] text-black shadow-lg shadow-[#02D7E5]/25'
+              : 'bg-zinc-900/90 text-zinc-400 hover:text-white border border-white/5'
+          }`}
+        >
+          <User className="w-3.5 h-3.5" />
+          <span>Overall Individual</span>
+          <span
+            className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+              activeTab === 'overall_individual' ? 'bg-black text-[#02D7E5]' : 'bg-white/10 text-zinc-300'
+            }`}
+          >
+            {countIndiv}
+          </span>
+        </button>
+
+        {/* Tab 2: Overall Duplas */}
+        <button
+          type="button"
+          onClick={() => handleTabChange('overall_dupla')}
+          className={`shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'overall_dupla'
+              ? 'bg-[#02D7E5] text-black shadow-lg shadow-[#02D7E5]/25'
+              : 'bg-zinc-900/90 text-zinc-400 hover:text-white border border-white/5'
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          <span>Overall Duplas</span>
+          <span
+            className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+              activeTab === 'overall_dupla' ? 'bg-black text-[#02D7E5]' : 'bg-white/10 text-zinc-300'
+            }`}
+          >
+            {countDupla}
+          </span>
+        </button>
+
+        <div className="h-6 w-px bg-zinc-800 mx-1 shrink-0" />
+
+        {/* Tabs 3 a 6: Tablas separadas por Categoría específica */}
+        {categorias.map((cat) => {
+          const catIdNorm = cat.id?.toLowerCase().trim()
+          const catNombreNorm = cat.nombre?.toLowerCase().trim()
+          const isSelected =
+            activeTab?.toLowerCase().trim() === catIdNorm ||
+            activeTab?.toLowerCase().trim() === catNombreNorm
+
+          const countCat = items.filter((i) => {
+            const iCatId = i.categoriaId?.toLowerCase().trim()
+            const iCatNombre = i.categoriaNombre?.toLowerCase().trim()
+            return iCatId === catIdNorm || (iCatNombre && iCatNombre === catNombreNorm)
+          }).length
+
+          return (
+            <button
+              key={cat.id}
+              type="button"
+              onClick={() => handleTabChange(cat.id)}
+              className={`shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+                isSelected
+                  ? 'bg-amber-400 text-black shadow-lg shadow-amber-400/25'
+                  : 'bg-zinc-900/90 text-zinc-400 hover:text-white border border-white/5'
+              }`}
+            >
+              <Medal className="w-3.5 h-3.5" />
+              <span>{toTitleCase(cat.nombre)}</span>
+              <span
+                className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                  isSelected ? 'bg-black text-amber-400' : 'bg-white/10 text-zinc-300'
+                }`}
+              >
+                {countCat}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* 3. Filtros Secundarios y Búsqueda */}
       <div className="p-4 md:p-5 rounded-3xl bg-zinc-950/70 border border-white/10 backdrop-blur-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-        {/* Chips de Heats */}
-        <div className="flex flex-wrap items-center gap-2">
-          {['TODOS', 'Heat 1', 'Heat 2', 'Heat 3', 'Heat 4', 'Heat 5', 'Heat 6'].map((heat) => {
+        {/* Chips de Heats dinámicos para esta vista */}
+        <div className="flex flex-wrap items-center gap-2 overflow-x-auto pb-1">
+          <span className="text-xs font-bold text-zinc-500 mr-1 flex items-center gap-1">
+            <Flame className="w-3.5 h-3.5 text-amber-400" />
+            Heats:
+          </span>
+          {heatsEnTab.map((heat) => {
             const isSel = heatFiltro === heat
             return (
               <button
                 key={heat}
                 type="button"
                 onClick={() => setHeatFiltro(heat)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shrink-0 ${
                   isSel
                     ? 'bg-[#02D7E5] text-black shadow-md shadow-[#02D7E5]/20'
                     : 'bg-zinc-900 text-zinc-400 hover:text-white border border-white/5'
@@ -208,7 +435,7 @@ export default function LeaderboardOficialClient({
         </div>
 
         {/* Buscador */}
-        <div className="relative w-full md:w-64">
+        <div className="relative w-full md:w-64 shrink-0">
           <Search className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
@@ -220,7 +447,7 @@ export default function LeaderboardOficialClient({
         </div>
       </div>
 
-      {/* 3. Tabla de Leaderboard Global */}
+      {/* 4. Tabla de Leaderboard Reutilizable con Datos Filtrados */}
       <div className="rounded-3xl bg-zinc-950/80 border border-white/10 backdrop-blur-xl overflow-hidden shadow-2xl">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -228,6 +455,7 @@ export default function LeaderboardOficialClient({
               <tr className="border-b border-white/10 bg-zinc-900/40 text-[11px] font-bold text-zinc-400 uppercase tracking-wider">
                 <th className="py-3.5 px-4 text-center w-16">Pos</th>
                 <th className="py-3.5 px-4">Atleta</th>
+                <th className="py-3.5 px-4 text-center">Categoría</th>
                 <th className="py-3.5 px-4 text-center">Heat</th>
                 <th className="py-3.5 px-4 text-center">Promedio Previo</th>
                 <th className="py-3.5 px-4 text-center">Tiempo Final</th>
@@ -237,21 +465,19 @@ export default function LeaderboardOficialClient({
             <tbody className="divide-y divide-white/5 text-xs">
               {itemsFiltrados.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-zinc-500">
-                    No se encontraron atletas registrados para los filtros seleccionados.
+                  <td colSpan={7} className="py-12 text-center text-zinc-500">
+                    No se encontraron atletas registrados para esta pestaña o filtro.
                   </td>
                 </tr>
               ) : (
                 itemsFiltrados.map((item) => {
-                  const tieneTiempo = typeof item.tiempoResultadoSegundos === 'number' && item.tiempoResultadoSegundos > 0
+                  const tieneTiempo =
+                    typeof item.tiempoResultadoSegundos === 'number' && item.tiempoResultadoSegundos > 0
                   const esPodio = tieneTiempo && item.posicion !== null && item.posicion <= 3
 
                   return (
-                    <tr
-                      key={item.id}
-                      className="hover:bg-white/[0.02] transition-colors"
-                    >
-                      {/* Posición */}
+                    <tr key={item.id} className="hover:bg-white/[0.02] transition-colors">
+                      {/* Posición Relativa al Tab */}
                       <td className="py-3.5 px-4 text-center font-bold">
                         {tieneTiempo && item.posicion !== null ? (
                           item.posicion === 1 ? (
@@ -281,6 +507,11 @@ export default function LeaderboardOficialClient({
                         <div className="space-y-0.5">
                           <p className={`font-bold text-sm ${esPodio ? 'text-white' : 'text-zinc-200'}`}>
                             {item.nombres}
+                            {item.partnerNombres && (
+                              <span className="text-[#02D7E5] font-semibold text-xs ml-1.5">
+                                & {item.partnerNombres}
+                              </span>
+                            )}
                           </p>
                           {item.cedula && (
                             <p className="text-[10px] text-zinc-500">CI: {item.cedula}</p>
@@ -288,12 +519,30 @@ export default function LeaderboardOficialClient({
                         </div>
                       </td>
 
+                      {/* Categoría */}
+                      <td className="py-3.5 px-4 text-center">
+                        {item.categoriaNombre ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-lg bg-zinc-900 border border-white/10 text-[11px] font-bold text-[#02D7E5]">
+                            {toTitleCase(item.categoriaNombre)}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-600 font-semibold">—</span>
+                        )}
+                      </td>
+
                       {/* Heat */}
                       <td className="py-3.5 px-4 text-center">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-zinc-900 border border-white/10 text-xs font-bold text-white">
-                          <Flame className="w-3 h-3 text-amber-400" />
-                          <span>{item.heatAsignado}</span>
-                        </span>
+                        <div className="inline-flex flex-col items-center gap-0.5">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-zinc-900 border border-white/10 text-xs font-bold text-white max-w-[180px] truncate">
+                            <Flame className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span className="truncate">{item.heatAsignado}</span>
+                          </span>
+                          {item.salidaAsignada && (
+                            <span className="text-[10px] text-zinc-400 font-semibold">
+                              {item.salidaAsignada}
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Promedio Previo */}
@@ -414,7 +663,7 @@ export default function LeaderboardOficialClient({
               type="button"
               onClick={() => setModalLiberar(false)}
               disabled={isProcessing}
-              className="flex-1 py-3 rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-bold text-xs border border-zinc-800 transition-colors cursor-pointer"
+              className="flex-1 py-3 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-xs border border-zinc-800 transition-colors cursor-pointer"
             >
               Cancelar
             </button>

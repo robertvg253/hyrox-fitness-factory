@@ -2,7 +2,8 @@ import { createClient } from '@/src/utils/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import TableroKanbanHeats, { AtletaKanban } from './TableroKanbanHeats'
-import { Flame, ShieldCheck, ArrowLeft, AlertCircle } from 'lucide-react'
+import { ShieldCheck, ArrowLeft, AlertCircle } from 'lucide-react'
+import { Categoria } from '@/src/types'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -34,16 +35,25 @@ export default async function HeatsPage() {
     .limit(1)
     .maybeSingle()
 
-  // 3. Obtener todos los atletas registrados
+  // 3. Obtener todas las categorías del sistema
+  const { data: categoriasData } = await supabase
+    .from('categorias')
+    .select('id, nombre, tipo')
+    .order('nombre', { ascending: true })
+
+  const categorias: Categoria[] = (categoriasData || []) as Categoria[]
+  const catMap = new Map(categorias.map((c) => [c.id, c]))
+
+  // 4. Obtener todos los atletas registrados en public.usuarios
   const { data: usuariosAtletas } = await supabase
     .from('usuarios')
-    .select('id, nombres, cedula, rol')
+    .select('id, nombres, cedula, rol, email')
     .ilike('rol', 'atleta')
     .order('creado_en', { ascending: false })
 
   const atletasList = usuariosAtletas || []
 
-  // 4. Obtener tiempos históricos para calcular promedios
+  // 5. Obtener tiempos históricos para calcular promedios
   const { data: todosTiempos } = await supabase
     .from('tiempos_historicos')
     .select('usuario_id, tiempo_segundos')
@@ -57,34 +67,46 @@ export default async function HeatsPage() {
     }
   })
 
-  // 5. Obtener participantes de la simulación activa para conocer su heat actual
-  const heatMap = new Map<string, string | null>()
+  // 6. Obtener participantes de la simulación activa para conocer su categoría y heat actual
+  const partMap = new Map<string, { id: string; heat_asignado: string | null; categoria_id: string | null }>()
   if (simulacionReciente?.id) {
     const { data: participantes } = await supabase
       .from('participantes_simulacion')
-      .select('usuario_id, heat_asignado')
+      .select('id, usuario_id, heat_asignado, categoria_id')
       .eq('simulacion_id', simulacionReciente.id)
 
     participantes?.forEach((p) => {
       if (p.usuario_id) {
-        heatMap.set(p.usuario_id, p.heat_asignado)
+        partMap.set(p.usuario_id, {
+          id: p.id,
+          heat_asignado: p.heat_asignado,
+          categoria_id: p.categoria_id,
+        })
       }
     })
   }
 
-  // 6. Mapear a formato AtletaKanban
+  // 7. Mapear a formato AtletaKanban
   const atletasKanban: AtletaKanban[] = atletasList.map((atleta) => {
     const tests = tiemposMap.get(atleta.id) || []
     const suma = tests.reduce((acc, v) => acc + v, 0)
     const promSec = tests.length > 0 ? Math.round(suma / tests.length) : 0
+    const part = partMap.get(atleta.id)
+
+    const catId = part?.categoria_id || null
+    const cat = catId ? catMap.get(catId) : null
 
     return {
-      id: atleta.id,
+      id: part?.id || atleta.id,
+      usuarioId: atleta.id,
       nombres: atleta.nombres || 'Atleta Sin Nombre',
       cedula: atleta.cedula || undefined,
+      categoriaId: catId,
+      categoriaNombre: cat?.nombre || null,
+      categoriaTipo: cat?.tipo || null,
       promedioSegundos: promSec,
       promedioMMSS: formatSegundosAMM_SS(promSec),
-      heatAsignado: heatMap.get(atleta.id) || null,
+      heatAsignado: part?.heat_asignado || null,
     }
   })
 
@@ -118,10 +140,10 @@ export default async function HeatsPage() {
           </div>
 
           <h1 className="text-3xl font-bold text-white tracking-tight mt-1">
-            Gestión y Asignación de Heats
+            Gestión y Asignación Dinámica de Heats
           </h1>
           <p className="text-xs text-zinc-400 mt-1">
-            Tablero interactivo Drag & Drop para organizar a los atletas del Heat 1 al Heat 6 según sus promedios históricos.
+            Tablero interactivo Drag & Drop para organizar a los atletas en Heats dinámicos de máximo 10 participantes por categoría.
           </p>
         </div>
 
@@ -166,6 +188,7 @@ export default async function HeatsPage() {
               }
             : null
         }
+        categorias={categorias}
         atletas={atletasKanban}
       />
     </div>

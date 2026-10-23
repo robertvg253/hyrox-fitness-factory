@@ -90,6 +90,7 @@ export interface ParticipanteSimulacion {
   simulacion_id: string;
   usuario_id: string;
   heat_asignado?: string | null;
+  salida_asignada?: string | null;
   promedio_previo_segundos?: number | null;
   tiempo_resultado_segundos?: number | null;
   asistio?: boolean | null;
@@ -109,6 +110,8 @@ export interface Preinscripcion {
   telefono?: string | null;
   genero?: string | null;
   simulacion_id?: string | null;
+  heat_asignado?: string | null;
+  salida_asignada?: string | null;
 }
 
 export interface Simulacion {

@@ -31,7 +31,7 @@ export async function verificarPreinscripcion(email: string): Promise<{
     // 1. Consultar estrictamente en public.preinscripciones con email = inputEmail AND reclamado = false
     const { data: preList, error: preErr } = await supabaseAdmin
       .from('preinscripciones')
-      .select('id, email, nombres, categoria_id, partner_email, partner_nombres, reclamado, creado_en')
+      .select('id, email, nombres, categoria_id, partner_email, partner_nombres, reclamado, creado_en, heat_asignado, salida_asignada')
       .ilike('email', emailLimpio)
       .eq('reclamado', false)
       .order('creado_en', { ascending: false })
@@ -56,7 +56,7 @@ export async function verificarPreinscripcion(email: string): Promise<{
     if (pre.categoria_id) {
       const { data: catData } = await supabaseAdmin
         .from('categorias')
-        .select('id, nombre, tipo, genero')
+        .select('id, nombre, tipo')
         .eq('id', pre.categoria_id)
         .maybeSingle()
       if (catData) {
@@ -115,7 +115,7 @@ export async function completarActivacion(payload: CompletarActivacionPayload): 
     // 1. Verificar nuevamente la preinscripción por seguridad
     const { data: pre, error: preErr } = await supabaseAdmin
       .from('preinscripciones')
-      .select('id, email, categoria_id, partner_email, partner_nombres, reclamado')
+      .select('id, email, categoria_id, partner_email, partner_nombres, reclamado, heat_asignado, salida_asignada')
       .eq('id', payload.preinscripcionId)
       .maybeSingle()
 
@@ -248,7 +248,9 @@ export async function completarActivacion(payload: CompletarActivacionPayload): 
         simulacion_id: sim.id,
         usuario_id: nuevoUserId,
         categoria_id: pre.categoria_id,
-        partner_nombres: pre.partner_nombres || null
+        partner_nombres: pre.partner_nombres || null,
+        heat_asignado: pre.heat_asignado || null,
+        salida_asignada: pre.salida_asignada || null
       })
 
     if (partErr) {

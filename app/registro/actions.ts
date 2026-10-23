@@ -43,7 +43,7 @@ export async function obtenerCategoriasSimulacionActiva(): Promise<{
     // 2. Consultar categorías asociadas a la simulación mediante simulacion_categorias
     const { data: simCatList, error: simCatErr } = await supabaseAdmin
       .from('simulacion_categorias')
-      .select('categoria_id, categorias ( id, nombre, tipo, genero )')
+      .select('categoria_id, categorias ( id, nombre, tipo )')
       .eq('simulacion_id', sim.id)
 
     let categorias: Categoria[] = []
@@ -58,7 +58,7 @@ export async function obtenerCategoriasSimulacionActiva(): Promise<{
     if (categorias.length === 0) {
       const { data: todasCat, error: catErr } = await supabaseAdmin
         .from('categorias')
-        .select('id, nombre, tipo, genero')
+        .select('id, nombre, tipo')
         .order('nombre', { ascending: true })
 
       if (!catErr && todasCat) {
