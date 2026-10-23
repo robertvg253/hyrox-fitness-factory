@@ -140,8 +140,88 @@ export default function RegistroAutonomoWizard() {
     }
   }
 
+  const handleOtpPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault()
+    const pastedData = e.clipboardData.getData('text').trim().replace(/\D/g, '')
+    if (!pastedData) return
+
+    const digits = pastedData.slice(0, 6).split('')
+    const newOtp = [...otpDigits]
+
+    digits.forEach((digit, idx) => {
+      if (idx < 6) {
+        newOtp[idx] = digit
+      }
+    })
+
+    setOtpDigits(newOtp)
+
+    const targetIndex = Math.min(digits.length, 6) - 1
+    if (targetIndex >= 0) {
+      otpInputRefs.current[targetIndex]?.focus()
+    }
+
+    if (digits.length >= 6) {
+      handleVerificarOtp(digits.slice(0, 6).join(''))
+    }
+  }
+
   const handleOtpChange = (index: number, val: string) => {
-    const digit = val.slice(-1)
+    const clean = val.replace(/\D/g, '')
+
+    // Si el usuario borró el valor
+    if (!clean) {
+      const newOtp = [...otpDigits]
+      newOtp[index] = ''
+      setOtpDigits(newOtp)
+      return
+    }
+
+    // Caso 1: Autofill de iOS o inyección de múltiples dígitos (>= 2 caracteres)
+    if (clean.length > 1) {
+      // Reemplazo de un dígito individual sin selección previa
+      if (clean.length === 2 && otpDigits[index] && clean.includes(otpDigits[index])) {
+        const replacement = clean.replace(otpDigits[index], '').slice(-1) || clean.slice(-1)
+        const newOtp = [...otpDigits]
+        newOtp[index] = replacement
+        setOtpDigits(newOtp)
+        if (replacement && index < 5) {
+          otpInputRefs.current[index + 1]?.focus()
+        }
+        return
+      }
+
+      // Autofill de iOS (código completo) o pegado:
+      const digits = clean.slice(0, 6).split('')
+      const newOtp = [...otpDigits]
+
+      // Si vienen 4 o más dígitos (o estamos en el índice 0), inyectar desde el inicio
+      if (digits.length >= 4 || index === 0) {
+        digits.forEach((d, idx) => {
+          if (idx < 6) newOtp[idx] = d
+        })
+      } else {
+        digits.forEach((d, idx) => {
+          if (index + idx < 6) newOtp[index + idx] = d
+        })
+      }
+
+      setOtpDigits(newOtp)
+
+      const targetIndex = Math.min(index + digits.length, 6) - 1
+      if (targetIndex >= 0) {
+        otpInputRefs.current[Math.min(targetIndex, 5)]?.focus()
+      }
+
+      const fullCode = newOtp.join('')
+      if (fullCode.length === 6 && newOtp.every(d => d !== '')) {
+        handleVerificarOtp(fullCode)
+      }
+      return
+    }
+
+    // Caso 2: Un solo dígito ingresado manualmente
+    const digit = clean.slice(-1)
     const newOtp = [...otpDigits]
     newOtp[index] = digit
     setOtpDigits(newOtp)
@@ -623,10 +703,13 @@ export default function RegistroAutonomoWizard() {
                                 ref={el => { otpInputRefs.current[i] = el }}
                                 type="text"
                                 inputMode="numeric"
-                                maxLength={1}
+                                autoComplete="one-time-code"
+                                maxLength={6}
                                 value={digit}
+                                onFocus={e => e.target.select()}
                                 onChange={e => handleOtpChange(i, e.target.value)}
                                 onKeyDown={e => handleOtpKeyDown(i, e)}
+                                onPaste={handleOtpPaste}
                                 className="w-10 h-12 text-center text-lg font-bold bg-zinc-950 border border-white/15 rounded-xl text-white focus:outline-none focus:border-[#02D7E5]"
                               />
                             ))}

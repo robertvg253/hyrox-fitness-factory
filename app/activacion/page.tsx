@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Mail,
@@ -280,24 +281,61 @@ function ActivacionContent() {
 
   const handleOtpChange = (index: number, val: string) => {
     const clean = val.replace(/\D/g, '')
-    // Si el teclado del móvil o autocompletado inserta varios dígitos de golpe
+
+    // Si el usuario borró el valor
+    if (!clean) {
+      const newOtp = [...otpDigits]
+      newOtp[index] = ''
+      setOtpDigits(newOtp)
+      return
+    }
+
+    // Caso 1: Autofill de iOS o inyección de múltiples dígitos (>= 2 caracteres)
     if (clean.length > 1) {
+      // Si el usuario tenía ya un dígito y escribió uno nuevo (reemplazo sin selección previa)
+      if (clean.length === 2 && otpDigits[index] && clean.includes(otpDigits[index])) {
+        const replacement = clean.replace(otpDigits[index], '').slice(-1) || clean.slice(-1)
+        const newOtp = [...otpDigits]
+        newOtp[index] = replacement
+        setOtpDigits(newOtp)
+        if (replacement && index < 5) {
+          otpInputRefs.current[index + 1]?.focus()
+        }
+        return
+      }
+
+      // Autofill de iOS (código completo) o pegado:
       const digits = clean.slice(0, 6).split('')
       const newOtp = [...otpDigits]
-      digits.forEach((d, idx) => {
-        if (idx < 6) newOtp[idx] = d
-      })
-      setOtpDigits(newOtp)
-      const targetIndex = Math.min(digits.length, 6) - 1
-      if (targetIndex >= 0) {
-        otpInputRefs.current[targetIndex]?.focus()
+
+      // Si vienen 4 o más dígitos (o estamos en el índice 0), inyectar desde el inicio
+      if (digits.length >= 4 || index === 0) {
+        digits.forEach((d, idx) => {
+          if (idx < 6) newOtp[idx] = d
+        })
+      } else {
+        // Rellenar a partir de la casilla actual
+        digits.forEach((d, idx) => {
+          if (index + idx < 6) newOtp[index + idx] = d
+        })
       }
-      if (digits.length >= 6) {
-        handleVerificarOtp(digits.slice(0, 6).join(''))
+
+      setOtpDigits(newOtp)
+
+      const targetIndex = Math.min(index + digits.length, 6) - 1
+      if (targetIndex >= 0) {
+        otpInputRefs.current[Math.min(targetIndex, 5)]?.focus()
+      }
+
+      // Si se completaron los 6 dígitos, auto-verificar de inmediato
+      const fullCode = newOtp.join('')
+      if (fullCode.length === 6 && newOtp.every(d => d !== '')) {
+        handleVerificarOtp(fullCode)
       }
       return
     }
 
+    // Caso 2: Un solo dígito ingresado manualmente
     const digit = clean.slice(-1)
     const newOtp = [...otpDigits]
     newOtp[index] = digit
@@ -832,8 +870,9 @@ function ActivacionContent() {
                       type="text"
                       inputMode="numeric"
                       autoComplete="one-time-code"
-                      maxLength={1}
+                      maxLength={6}
                       value={digit}
+                      onFocus={e => e.target.select()}
                       onChange={e => handleOtpChange(i, e.target.value)}
                       onKeyDown={e => handleOtpKeyDown(i, e)}
                       onPaste={handleOtpPaste}
@@ -1061,6 +1100,19 @@ function ActivacionContent() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Enlace para ir al Inicio de Sesión */}
+        <div className="mt-5 text-center">
+          <p className="text-xs text-zinc-400">
+            ¿Ya tienes tu cuenta activada?{' '}
+            <Link
+              href="/login"
+              className="text-[#02D7E5] hover:text-[#02D7E5]/80 font-bold hover:underline transition-colors inline-flex items-center gap-1"
+            >
+              Iniciar sesión
+            </Link>
+          </p>
+        </div>
       </div>
     </main>
   )
