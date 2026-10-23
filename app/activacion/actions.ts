@@ -193,68 +193,151 @@ export async function completarActivacion(payload: CompletarActivacionPayload): 
       return { success: false, error: `Error guardando perfil: ${userInsertErr.message}` }
     }
 
-    // 6. Migración Automática de Tiempos Históricos (tiempos_preinscritos -> tiempos_historicos)
-    // 1. Buscar los tiempos precargados del correo con cliente Admin (Service Role)
-    const inputEmail = payload.email.trim()
-    console.log("=== INICIANDO MIGRACIÓN PARA ===", inputEmail);
+    // 6. Migración Automática e Idempotente de Tiempos Históricos (tiempos_preinscritos -> tiempos_historicos)
+    try {
+      const inputEmail = payload.email.trim()
+      console.log('[completarActivacion] Iniciando migración de tiempos para:', inputEmail)
 
-    let { data: tiemposTemp, error: errTemp } = await supabaseAdmin
-      .from('tiempos_preinscritos')
-      .select('*')
-      .ilike('email', inputEmail.trim())
-
-    console.log("TIEMPOS ENCONTRADOS:", tiemposTemp);
-    console.log("ERROR DE BÚSQUEDA (si hay):", errTemp);
-
-    // Fallback: si no hubo coincidencia por inputEmail, buscar también por pre.email si es distinto
-    if ((!tiemposTemp || tiemposTemp.length === 0) && pre.email && pre.email.trim().toLowerCase() !== inputEmail.toLowerCase()) {
-      console.log('[completarActivacion] Intentando fallback con pre.email:', pre.email.trim())
-      const { data: tpPre } = await supabaseAdmin
+      let { data: tiemposTemp, error: errTemp } = await supabaseAdmin
         .from('tiempos_preinscritos')
         .select('*')
-        .ilike('email', pre.email.trim())
-      if (tpPre && tpPre.length > 0) {
-        tiemposTemp = tpPre
-        console.log("TIEMPOS ENCONTRADOS (FALLBACK PRE.EMAIL):", tiemposTemp)
-      }
-    }
+        .ilike('email', inputEmail)
 
-    // 2. Si hay tiempos, insertarlos en tiempos_historicos usando supabaseAdmin
-    if (tiemposTemp && tiemposTemp.length > 0) {
-      const tiemposInsert = tiemposTemp.map(t => ({
-        usuario_id: nuevoUserId,
-        numero_test: t.numero_test,
-        tiempo_segundos: t.tiempo_segundos
-      }))
-
-      const { error: errInsertTiempos } = await supabaseAdmin
-        .from('tiempos_historicos')
-        .insert(tiemposInsert)
-
-      if (errInsertTiempos) {
-        console.error('[completarActivacion] Error insertando tiempos_historicos:', errInsertTiempos)
-        await supabaseAdmin.from('usuarios').delete().eq('id', nuevoUserId)
-        await supabaseAdmin.auth.admin.deleteUser(nuevoUserId)
-        throw new Error('Error migrando tiempos.')
+      if (errTemp) {
+        console.error('[AUDITORÍA FORENSE H32 - ERROR CONSULTANDO TIEMPOS PREINSCRITOS]:', {
+          code: errTemp.code,
+          message: errTemp.message,
+          details: errTemp.details,
+          hint: errTemp.hint,
+          inputEmail
+        })
       }
 
-      console.log("TIEMPOS INSERTADOS CORRECTAMENTE");
+      // Fallback: si no hubo coincidencia por inputEmail, buscar también por pre.email si es distinto
+      if (
+        (!tiemposTemp || tiemposTemp.length === 0) &&
+        pre.email &&
+        pre.email.trim().toLowerCase() !== inputEmail.toLowerCase()
+      ) {
+        console.log('[completarActivacion] Intentando fallback con pre.email:', pre.email.trim())
+        const { data: tpPre, error: errFallback } = await supabaseAdmin
+          .from('tiempos_preinscritos')
+          .select('*')
+          .ilike('email', pre.email.trim())
+        if (errFallback) {
+          console.error('[AUDITORÍA FORENSE H32 - ERROR FALLBACK PRE.EMAIL]:', {
+            code: errFallback.code,
+            message: errFallback.message,
+            details: errFallback.details,
+            hint: errFallback.hint,
+            preEmail: pre.email.trim()
+          })
+        }
+        if (tpPre && tpPre.length > 0) {
+          tiemposTemp = tpPre
+          console.log('[completarActivacion] Tiempos encontrados vía pre.email fallback:', tiemposTemp.length)
+        }
+      }
+
+      // Procesamiento resiliente si existen tiempos precargados
+      if (tiemposTemp && tiemposTemp.length > 0) {
+        // BLINDAJE IDEMPOTENTE Y RESOLUCIÓN DE CAUSA RAÍZ:
+        // En producción se detectaron múltiples filas para el mismo numero_test por atleta (ej. dos test 1).
+        // Postgres tiene un constraint UNIQUE en (usuario_id, numero_test).
+        // Agrupamos por test y conservamos el mejor tiempo (más rápido, menor segundos > 0).
+        const tiemposPorTest = new Map<number, number>()
+
+        for (const t of tiemposTemp) {
+          const testNum = parseInt(String(t.numero_test), 10)
+          const tiempoSec = Math.round(Number(t.tiempo_segundos))
+
+          if (!isNaN(testNum) && testNum > 0 && !isNaN(tiempoSec) && tiempoSec > 0) {
+            if (!tiemposPorTest.has(testNum)) {
+              tiemposPorTest.set(testNum, tiempoSec)
+            } else {
+              // Si hay duplicados para el mismo test, conservamos el mejor tiempo (más rápido)
+              const tiempoPrevio = tiemposPorTest.get(testNum)!
+              if (tiempoSec < tiempoPrevio) {
+                tiemposPorTest.set(testNum, tiempoSec)
+              }
+            }
+          }
+        }
+
+        const tiemposFinales = Array.from(tiemposPorTest.entries()).map(([numero_test, tiempo_segundos]) => ({
+          usuario_id: nuevoUserId,
+          numero_test,
+          tiempo_segundos
+        }))
+
+        if (tiemposFinales.length > 0) {
+          // Usamos upsert con onConflict: 'usuario_id,numero_test' para garantizar 100% idempotencia ante reintentos
+          const { error: errUpsertTiempos } = await supabaseAdmin
+            .from('tiempos_historicos')
+            .upsert(tiemposFinales, {
+              onConflict: 'usuario_id,numero_test'
+            })
+
+          if (errUpsertTiempos) {
+            console.error('[AUDITORÍA FORENSE H32 - ERROR INSERTANDO TIEMPOS HISTÓRICOS]:', {
+              code: errUpsertTiempos.code,
+              message: errUpsertTiempos.message,
+              details: errUpsertTiempos.details,
+              hint: errUpsertTiempos.hint,
+              userPayload: {
+                nuevoUserId,
+                emailNormalizado,
+                cedulaNormalizada,
+                inputEmail,
+                preEmail: pre.email
+              },
+              tiemposTemp,
+              tiemposFinales
+            })
+            // BLINDAJE: Los tiempos históricos son métricas de referencia comparativa opcionales.
+            // Una inconsistencia en estos registros NUNCA debe abortar la activación ni borrar la cuenta del atleta.
+          } else {
+            console.log('[completarActivacion] Tiempos migrados exitosamente:', tiemposFinales.length)
+          }
+        } else {
+          console.log('[completarActivacion] No se encontraron tiempos numéricos válidos en tiemposTemp.')
+        }
+      } else {
+        console.log('[completarActivacion] El atleta no tiene registros en tiempos_preinscritos. Flujo limpio continuado.')
+      }
+    } catch (migracionError: any) {
+      console.error('[AUDITORÍA FORENSE H32 - EXCEPCIÓN EN MIGRACIÓN DE TIEMPOS]:', {
+        error: migracionError?.message || migracionError,
+        stack: migracionError?.stack,
+        user: { nuevoUserId, emailNormalizado, cedulaNormalizada }
+      })
+      // Continuar sin romper el flujo de activación
     }
 
-    // 7. Inscribir en public.participantes_simulacion con categoria_id y partner_nombres
+    // 7. Inscribir de forma idempotente en public.participantes_simulacion con categoria_id y partner_nombres
     const { error: partErr } = await supabaseAdmin
       .from('participantes_simulacion')
-      .insert({
-        simulacion_id: sim.id,
-        usuario_id: nuevoUserId,
-        categoria_id: pre.categoria_id,
-        partner_nombres: pre.partner_nombres || null,
-        heat_asignado: pre.heat_asignado || null,
-        salida_asignada: pre.salida_asignada || null
-      })
+      .upsert(
+        {
+          simulacion_id: sim.id,
+          usuario_id: nuevoUserId,
+          categoria_id: pre.categoria_id,
+          partner_nombres: pre.partner_nombres || null,
+          heat_asignado: pre.heat_asignado || null,
+          salida_asignada: pre.salida_asignada || null
+        },
+        { onConflict: 'simulacion_id,usuario_id' }
+      )
 
     if (partErr) {
-      console.error('[completarActivacion] Error insertando participante:', partErr)
+      console.error('[completarActivacion] Error inscribiendo participante:', {
+        code: partErr.code,
+        message: partErr.message,
+        details: partErr.details,
+        hint: partErr.hint,
+        nuevoUserId,
+        simulacionId: sim.id
+      })
       await supabaseAdmin.from('tiempos_historicos').delete().eq('usuario_id', nuevoUserId)
       await supabaseAdmin.from('usuarios').delete().eq('id', nuevoUserId)
       await supabaseAdmin.auth.admin.deleteUser(nuevoUserId)
