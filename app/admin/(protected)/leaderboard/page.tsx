@@ -86,6 +86,7 @@ export default async function LeaderboardPage() {
         id,
         simulacion_id,
         usuario_id,
+        dorsal,
         heat_asignado,
         salida_asignada,
         tiempo_resultado_segundos,
@@ -169,6 +170,7 @@ export default async function LeaderboardPage() {
       return {
         id: p.id,
         usuarioId: p.usuario_id,
+        dorsal: p.dorsal || null,
         posicion: null,
         nombres: nombreAtleta,
         partnerNombres: p.partner_nombres ? p.partner_nombres.trim() : null,

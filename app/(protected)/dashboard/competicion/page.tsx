@@ -82,6 +82,7 @@ export default async function CompeticionPage() {
     id: string
     simulacion_id: string
     usuario_id: string
+    dorsal?: string | null
     heat_asignado: string | null
     salida_asignada?: string | null
     promedio_previo_segundos: number | null
@@ -105,6 +106,7 @@ export default async function CompeticionPage() {
 
   const heatAsignado = participante?.heat_asignado || null
   const salidaAsignada = participante?.salida_asignada || null
+  const dorsal = participante?.dorsal || null
   const estaInscrito = Boolean(participante)
   const tablaLiberada = Boolean(simulacion?.tabla_liberada)
   const heatsLiberados = Boolean(simulacion?.heats_liberados)
@@ -178,9 +180,21 @@ export default async function CompeticionPage() {
 
           <div className="space-y-4">
             <div className="flex items-start justify-between gap-3">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 pt-0.5">
-                Asignación de Heat
-              </span>
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                  Asignación de Heat
+                </span>
+                {dorsal ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-mono font-bold bg-[#02D7E5]/15 text-[#02D7E5] border border-[#02D7E5]/40 shadow-sm">
+                    <span className="text-zinc-400 font-sans text-[10px] uppercase font-bold tracking-wider">Dorsal</span>
+                    <span>#{dorsal}</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-[10px] font-mono font-semibold bg-zinc-900 text-zinc-500 border border-zinc-800">
+                    DORSAL S/D
+                  </span>
+                )}
+              </div>
               <div className="flex flex-col items-end">
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#02D7E5]/10 text-[#02D7E5] border border-[#02D7E5]/30 tracking-wide uppercase text-right">
                   {nombreCategoria?.toUpperCase() || 'SIN CATEGORÍA'}

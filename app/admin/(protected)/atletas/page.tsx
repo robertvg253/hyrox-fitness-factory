@@ -49,6 +49,28 @@ export default async function AtletasPage() {
     }
   })
 
+  // 3.1 Fetch de dorsales de participantes en la simulación activa o más reciente
+  const { data: simulacionReciente } = await supabase
+    .from('simulaciones')
+    .select('id')
+    .order('fecha_creacion', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const dorsalesMap = new Map<string, string>()
+  if (simulacionReciente?.id) {
+    const { data: participantes } = await supabase
+      .from('participantes_simulacion')
+      .select('usuario_id, dorsal')
+      .eq('simulacion_id', simulacionReciente.id)
+
+    participantes?.forEach((p) => {
+      if (p.usuario_id && p.dorsal) {
+        dorsalesMap.set(p.usuario_id, p.dorsal)
+      }
+    })
+  }
+
   // 4. Formatear datos para el Directorio
   const atletasFormatted: AtletaDirectorioItem[] = atletasList.map((atleta) => {
     const userTests = tiemposMap.get(atleta.id) || new Map<number, number>()
@@ -60,6 +82,7 @@ export default async function AtletasPage() {
 
     return {
       id: atleta.id,
+      dorsal: dorsalesMap.get(atleta.id) || null,
       nombres: atleta.nombres || 'Atleta Sin Nombre',
       cedula: atleta.cedula || 'N/A',
       telefono: atleta.telefono || null,

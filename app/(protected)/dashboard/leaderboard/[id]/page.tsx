@@ -88,6 +88,7 @@ export default async function LeaderboardPublicoPage({ params }: PageProps) {
       id,
       simulacion_id,
       usuario_id,
+      dorsal,
       heat_asignado,
       salida_asignada,
       tiempo_resultado_segundos,
@@ -158,6 +159,7 @@ export default async function LeaderboardPublicoPage({ params }: PageProps) {
     return {
       id: p.id,
       usuarioId: p.usuario_id,
+      dorsal: p.dorsal || null,
       nombres: nombreAtleta,
       partnerNombres: p.partner_nombres ? p.partner_nombres.trim() : null,
       categoriaId: catId ? catId.trim() : null,

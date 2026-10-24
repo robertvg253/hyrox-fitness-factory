@@ -16,6 +16,7 @@ import {
 
 export interface AtletaDirectorioItem {
   id: string
+  dorsal?: string | null
   nombres: string
   cedula: string
   telefono: string | null
@@ -40,10 +41,23 @@ export default function AtletasDirectorioClient({ atletas }: Props) {
 
   const atletasFiltrados = atletas.filter((a) => {
     const q = busqueda.toLowerCase().trim()
+    if (!q) return true
+    const qSinHash = q.replace(/^#/, '')
+    const qCleanNum = qSinHash.replace(/^0+/, '')
+    const dorsalClean = a.dorsal ? a.dorsal.replace(/^0+/, '') : ''
+
+    const matchDorsal = !!(
+      a.dorsal &&
+      (a.dorsal.toLowerCase().includes(q) ||
+        `#${a.dorsal.toLowerCase()}`.includes(q) ||
+        (qCleanNum && (dorsalClean === qCleanNum || dorsalClean.includes(qCleanNum))))
+    )
+
     return (
       a.nombres.toLowerCase().includes(q) ||
       a.cedula.toLowerCase().includes(q) ||
-      a.email.toLowerCase().includes(q)
+      a.email.toLowerCase().includes(q) ||
+      matchDorsal
     )
   })
 
@@ -55,7 +69,7 @@ export default function AtletasDirectorioClient({ atletas }: Props) {
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
           <input
             type="text"
-            placeholder="Buscar por nombre, cédula o correo..."
+            placeholder="Buscar por nombre, cédula, correo o # dorsal..."
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 bg-zinc-900/80 border border-zinc-800 rounded-2xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
@@ -108,9 +122,20 @@ export default function AtletasDirectorioClient({ atletas }: Props) {
                     {/* Datos Atleta */}
                     <td className="py-4 px-5">
                       <div className="space-y-1">
-                        <span className="font-bold text-white text-sm block tracking-tight">
-                          {atleta.nombres}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          {atleta.dorsal ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold bg-[#02D7E5]/15 text-[#02D7E5] border border-[#02D7E5]/30 shrink-0">
+                              #{atleta.dorsal}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-1 py-0.5 rounded-md text-[9px] font-mono font-semibold bg-zinc-800 text-zinc-500 border border-zinc-700/50 shrink-0">
+                              S/D
+                            </span>
+                          )}
+                          <span className="font-bold text-white text-sm block tracking-tight">
+                            {atleta.nombres}
+                          </span>
+                        </div>
                         <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
                           <span className="flex items-center gap-1 font-mono">
                             <ShieldCheck className="w-3 h-3 text-[#02D7E5]" />

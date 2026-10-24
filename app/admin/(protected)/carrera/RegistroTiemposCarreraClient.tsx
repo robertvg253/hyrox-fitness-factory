@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -22,11 +22,13 @@ import {
   Trophy,
   X,
   Timer,
-  Lock
+  Lock,
+  AlertCircle
 } from 'lucide-react'
 
 export interface AtletaCarrera {
   id: string
+  dorsal?: string | null
   nombres: string
   partnerNombres?: string | null
   cedula?: string
@@ -48,7 +50,13 @@ interface CarreraClientProps {
   atletas: AtletaCarrera[]
 }
 
-const HEATS = ['Heat 1', 'Heat 2', 'Heat 3', 'Heat 4', 'Heat 5', 'Heat 6'] as const
+function getAtletaHeat(atleta: AtletaCarrera): string {
+  const h = atleta.heatAsignado ? atleta.heatAsignado.trim() : ''
+  if (!h || h === 'Sin Asignar' || h === 'Sin Heat Asignado') {
+    return 'Sin Heat Asignado'
+  }
+  return h
+}
 
 /**
  * Función de formateo en vivo de máscara MM:SS
@@ -163,6 +171,15 @@ function AtletaRowItem({
 
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
+            {atleta.dorsal ? (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-lg text-xs font-mono font-bold bg-[#02D7E5]/15 text-[#02D7E5] border border-[#02D7E5]/40 shadow-sm shrink-0">
+                #{atleta.dorsal}
+              </span>
+            ) : (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-lg text-[10px] font-mono font-semibold bg-zinc-800 text-zinc-500 border border-zinc-700/50 shrink-0">
+                S/D
+              </span>
+            )}
             <p className="font-bold text-sm text-white truncate">
               {atleta.nombres}
               {atleta.partnerNombres && (
@@ -341,17 +358,71 @@ export default function RegistroTiemposCarreraClient({
   // Condición de Pista Habilitada: ESTRICTAMENTE 'EN_CURSO'
   const pistaHabilitada = simulacion?.estado === 'EN_CURSO'
 
+  // Extraer y ordenar todos los Heats presentes de forma 100% DINÁMICA
+  const { heatsOrdenados, hayAtletasSinHeat } = useMemo(() => {
+    const heatsSet = new Set<string>()
+    let sinHeat = false
+
+    atletas.forEach((a) => {
+      const h = getAtletaHeat(a)
+      if (h === 'Sin Heat Asignado') {
+        sinHeat = true
+      } else {
+        heatsSet.add(h)
+      }
+    })
+
+    // Ordenar de forma natural: "Heat 1", "Heat 2", ..., "Heat 10", "Heat 11"
+    const ordenados = Array.from(heatsSet).sort((a, b) => {
+      const numA = parseInt(a.match(/\d+/)?.[0] || '0', 10)
+      const numB = parseInt(b.match(/\d+/)?.[0] || '0', 10)
+      if (numA > 0 && numB > 0 && numA !== numB) {
+        return numA - numB
+      }
+      return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+    })
+
+    return { heatsOrdenados: ordenados, hayAtletasSinHeat: sinHeat }
+  }, [atletas])
+
+  // Todas las secciones a renderizar en orden: Heats válidos primero, y "Sin Heat Asignado" al final
+  const todasLasSecciones = useMemo(() => {
+    const list = [...heatsOrdenados]
+    if (hayAtletasSinHeat) {
+      list.push('Sin Heat Asignado')
+    }
+    return list
+  }, [heatsOrdenados, hayAtletasSinHeat])
+
   // Filtrado de atletas
-  const atletasFiltrados = atletas.filter((a) => {
-    const matchHeat = selectedHeat === 'TODOS' || a.heatAsignado === selectedHeat
-    const matchBusqueda =
-      !busqueda ||
-      a.nombres.toLowerCase().includes(busqueda.toLowerCase()) ||
-      (a.partnerNombres && a.partnerNombres.toLowerCase().includes(busqueda.toLowerCase())) ||
-      (a.categoriaNombre && a.categoriaNombre.toLowerCase().includes(busqueda.toLowerCase())) ||
-      (a.cedula && a.cedula.includes(busqueda))
-    return matchHeat && matchBusqueda
-  })
+  const atletasFiltrados = useMemo(() => {
+    return atletas.filter((a) => {
+      const atletaHeat = getAtletaHeat(a)
+      const matchHeat = selectedHeat === 'TODOS' || atletaHeat === selectedHeat
+      const q = busqueda.trim().toLowerCase()
+      if (!q) return matchHeat
+
+      const qSinHash = q.replace(/^#/, '')
+      const qCleanNum = qSinHash.replace(/^0+/, '')
+      const dorsalClean = a.dorsal ? a.dorsal.replace(/^0+/, '') : ''
+
+      const matchDorsal = !!(
+        a.dorsal &&
+        (a.dorsal.toLowerCase().includes(q) ||
+          `#${a.dorsal.toLowerCase()}`.includes(q) ||
+          (qCleanNum && (dorsalClean === qCleanNum || dorsalClean.includes(qCleanNum))))
+      )
+
+      const matchBusqueda =
+        a.nombres.toLowerCase().includes(q) ||
+        (a.partnerNombres && a.partnerNombres.toLowerCase().includes(q)) ||
+        (a.categoriaNombre && a.categoriaNombre.toLowerCase().includes(q)) ||
+        (a.cedula && a.cedula.includes(q)) ||
+        matchDorsal
+
+      return matchHeat && matchBusqueda
+    })
+  }, [atletas, selectedHeat, busqueda])
 
   // Métricas rápidas
   const totalConTiempo = tiemposRegistradosIds.size
@@ -465,7 +536,7 @@ export default function RegistroTiemposCarreraClient({
             <Search className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Buscar atleta o cédula..."
+              placeholder="Buscar por atleta, cédula o # dorsal..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
               className="w-full pl-9 pr-4 py-2 bg-zinc-900/90 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
@@ -473,7 +544,7 @@ export default function RegistroTiemposCarreraClient({
           </div>
         </div>
 
-        {/* Pestañas de Heats */}
+        {/* Pestañas de Heats Dinámicas */}
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-white/5">
           <button
             type="button"
@@ -487,8 +558,8 @@ export default function RegistroTiemposCarreraClient({
             Todos ({atletas.length})
           </button>
 
-          {HEATS.map((heat) => {
-            const count = atletas.filter((a) => a.heatAsignado === heat).length
+          {heatsOrdenados.map((heat) => {
+            const count = atletas.filter((a) => getAtletaHeat(a) === heat).length
             const isSel = selectedHeat === heat
             return (
               <button
@@ -505,15 +576,36 @@ export default function RegistroTiemposCarreraClient({
               </button>
             )
           })}
+
+          {hayAtletasSinHeat && (
+            <button
+              type="button"
+              onClick={() => setSelectedHeat('Sin Heat Asignado')}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                selectedHeat === 'Sin Heat Asignado'
+                  ? 'bg-amber-500 text-black shadow-md shadow-amber-500/20'
+                  : 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/30'
+              }`}
+            >
+              <AlertCircle className="w-3.5 h-3.5" />
+              <span>
+                Sin Heat Asignado (
+                {atletas.filter((a) => getAtletaHeat(a) === 'Sin Heat Asignado').length}
+                )
+              </span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* 3. Listado de Heats con Filas de Atletas Aisladas */}
       <div className="space-y-6">
-        {HEATS.filter((h) => selectedHeat === 'TODOS' || selectedHeat === h).map((heatKey) => {
+        {todasLasSecciones.filter((h) => selectedHeat === 'TODOS' || selectedHeat === h).map((heatKey) => {
+          const esSinHeat = heatKey === 'Sin Heat Asignado'
+
           // Ordenar atletas de MENOR a MAYOR promedio (más rápidos arriba)
           const atletasDelHeat = atletasFiltrados
-            .filter((a) => a.heatAsignado === heatKey)
+            .filter((a) => getAtletaHeat(a) === heatKey)
             .sort((a, b) => {
               if (!a.promedioSegundos && b.promedioSegundos) return 1
               if (a.promedioSegundos && !b.promedioSegundos) return -1
@@ -539,25 +631,53 @@ export default function RegistroTiemposCarreraClient({
           return (
             <div
               key={heatKey}
-              className="rounded-3xl bg-zinc-950/80 border border-white/10 backdrop-blur-xl overflow-hidden shadow-2xl"
+              className={`rounded-3xl backdrop-blur-xl overflow-hidden shadow-2xl border ${
+                esSinHeat
+                  ? 'bg-zinc-950/80 border-amber-500/30'
+                  : 'bg-zinc-950/80 border-white/10'
+              }`}
             >
               {/* Cabecera del Heat */}
-              <div className="p-4 md:px-6 border-b border-white/10 bg-zinc-900/40 flex items-center justify-between">
+              <div
+                className={`p-4 md:px-6 border-b flex items-center justify-between ${
+                  esSinHeat
+                    ? 'bg-amber-500/10 border-amber-500/20'
+                    : 'bg-zinc-900/40 border-white/10'
+                }`}
+              >
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                    <Flame className="w-4 h-4 text-amber-400" />
+                  <div
+                    className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                      esSinHeat
+                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                        : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                    }`}
+                  >
+                    {esSinHeat ? (
+                      <AlertCircle className="w-4 h-4 text-amber-400" />
+                    ) : (
+                      <Flame className="w-4 h-4 text-amber-400" />
+                    )}
                   </div>
                   <div>
                     <h3 className="text-base font-bold text-white tracking-tight">
                       {heatKey}
                     </h3>
                     <p className="text-[10px] text-zinc-400">
-                      Tanda oficial de salida
+                      {esSinHeat
+                        ? 'Atletas pendientes por asignar tanda oficial de salida'
+                        : 'Tanda oficial de salida'}
                     </p>
                   </div>
                 </div>
 
-                <span className="px-2.5 py-1 rounded-xl bg-white/5 border border-white/10 text-xs font-bold text-white">
+                <span
+                  className={`px-2.5 py-1 rounded-xl border text-xs font-bold ${
+                    esSinHeat
+                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                      : 'bg-white/5 border-white/10 text-white'
+                  }`}
+                >
                   {atletasDelHeat.length} {atletasDelHeat.length === 1 ? 'atleta' : 'atletas'}
                 </span>
               </div>

@@ -18,6 +18,7 @@ import { Categoria } from '@/src/types'
 export interface AtletaKanban {
   id: string
   usuarioId: string
+  dorsal?: string | null
   nombres: string
   cedula?: string
   categoriaId?: string | null
@@ -226,6 +227,15 @@ export default function TableroKanbanHeats({
                 className="px-3 py-2 rounded-xl bg-zinc-900/95 border border-white/10 flex items-center gap-2 shadow-md"
               >
                 <div className="flex items-center gap-2">
+                  {atleta.dorsal ? (
+                    <span className="px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold bg-[#02D7E5]/15 border border-[#02D7E5]/30 text-[#02D7E5] shrink-0">
+                      #{atleta.dorsal}
+                    </span>
+                  ) : (
+                    <span className="px-1 py-0.5 rounded-md text-[9px] font-mono font-semibold bg-zinc-800 text-zinc-500 border border-zinc-700/50 shrink-0">
+                      S/D
+                    </span>
+                  )}
                   <span className="font-bold text-xs text-white max-w-[140px] truncate">
                     {atleta.nombres}
                   </span>
@@ -319,11 +329,22 @@ export default function TableroKanbanHeats({
                             {index + 1}
                           </span>
                           <div className="min-w-0">
-                            <p className="font-bold text-sm text-white truncate">
-                              {atleta.nombres}
-                            </p>
+                            <div className="flex items-center gap-1.5">
+                              {atleta.dorsal ? (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold bg-[#02D7E5]/15 text-[#02D7E5] border border-[#02D7E5]/30 shrink-0">
+                                  #{atleta.dorsal}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-1 py-0.5 rounded-md text-[9px] font-mono font-semibold bg-zinc-800 text-zinc-500 border border-zinc-700/50 shrink-0">
+                                  S/D
+                                </span>
+                              )}
+                              <p className="font-bold text-sm text-white truncate">
+                                {atleta.nombres}
+                              </p>
+                            </div>
                             {atleta.cedula && (
-                              <p className="text-[10px] text-zinc-500 truncate">
+                              <p className="text-[10px] text-zinc-500 truncate mt-0.5">
                                 CI: {atleta.cedula}
                               </p>
                             )}

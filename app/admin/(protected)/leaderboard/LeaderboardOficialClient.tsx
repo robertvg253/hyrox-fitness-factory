@@ -27,6 +27,7 @@ import { Categoria } from '@/src/types'
 export interface AtletaLeaderboardItem {
   id: string
   usuarioId: string
+  dorsal?: string | null
   posicion: number | null
   nombres: string
   partnerNombres?: string | null
@@ -162,11 +163,26 @@ export default function LeaderboardOficialClient({
   const itemsFiltrados = useMemo(() => {
     return itemsRankeados.filter((item) => {
       const matchHeat = heatFiltro === 'TODOS' || item.heatAsignado === heatFiltro
+      const q = busqueda.trim().toLowerCase()
+      if (!q) return matchHeat
+
+      const qSinHash = q.replace(/^#/, '')
+      const qCleanNum = qSinHash.replace(/^0+/, '')
+      const dorsalClean = item.dorsal ? item.dorsal.replace(/^0+/, '') : ''
+
+      const matchDorsal = !!(
+        item.dorsal &&
+        (item.dorsal.toLowerCase().includes(q) ||
+          `#${item.dorsal.toLowerCase()}`.includes(q) ||
+          (qCleanNum && (dorsalClean === qCleanNum || dorsalClean.includes(qCleanNum))))
+      )
+
       const matchBusqueda =
-        !busqueda ||
-        item.nombres.toLowerCase().includes(busqueda.toLowerCase()) ||
-        (item.partnerNombres && item.partnerNombres.toLowerCase().includes(busqueda.toLowerCase())) ||
-        (item.cedula && item.cedula.includes(busqueda))
+        item.nombres.toLowerCase().includes(q) ||
+        (item.partnerNombres && item.partnerNombres.toLowerCase().includes(q)) ||
+        (item.cedula && item.cedula.includes(q)) ||
+        matchDorsal
+
       return matchHeat && matchBusqueda
     })
   }, [itemsRankeados, heatFiltro, busqueda])
@@ -439,7 +455,7 @@ export default function LeaderboardOficialClient({
           <Search className="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="Buscar por nombre o CI..."
+            placeholder="Buscar por atleta, CI o # dorsal..."
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
             className="w-full pl-9 pr-4 py-2 bg-zinc-900/90 border border-white/10 rounded-xl text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5]"
@@ -505,14 +521,25 @@ export default function LeaderboardOficialClient({
                       {/* Atleta */}
                       <td className="py-3.5 px-4">
                         <div className="space-y-0.5">
-                          <p className={`font-bold text-sm ${esPodio ? 'text-white' : 'text-zinc-200'}`}>
-                            {item.nombres}
-                            {item.partnerNombres && (
-                              <span className="text-[#02D7E5] font-semibold text-xs ml-1.5">
-                                & {item.partnerNombres}
+                          <div className="flex items-center gap-2">
+                            {item.dorsal ? (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold bg-[#02D7E5]/15 text-[#02D7E5] border border-[#02D7E5]/30 shrink-0">
+                                #{item.dorsal}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-1 py-0.5 rounded-md text-[9px] font-mono font-semibold bg-zinc-800 text-zinc-500 border border-zinc-700/50 shrink-0">
+                                S/D
                               </span>
                             )}
-                          </p>
+                            <p className={`font-bold text-sm ${esPodio ? 'text-white' : 'text-zinc-200'}`}>
+                              {item.nombres}
+                              {item.partnerNombres && (
+                                <span className="text-[#02D7E5] font-semibold text-xs ml-1.5">
+                                  & {item.partnerNombres}
+                                </span>
+                              )}
+                            </p>
+                          </div>
                           {item.cedula && (
                             <p className="text-[10px] text-zinc-500">CI: {item.cedula}</p>
                           )}

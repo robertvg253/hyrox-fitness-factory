@@ -19,6 +19,7 @@ import { Categoria } from '@/src/types'
 export interface AtletaPublicoItem {
   id: string
   usuarioId: string
+  dorsal?: string | null
   nombres: string
   partnerNombres?: string | null
   categoriaId?: string | null
@@ -136,15 +137,25 @@ export default function LeaderboardPublicoClient({
     return [...rankeadosConPos, ...sinTiempo]
   }, [itemsPorTab])
 
-  // Filtrar por búsqueda de nombre / partner
+  // Filtrar por búsqueda de nombre / partner / dorsal
   const itemsFiltrados = useMemo(() => {
     if (!busqueda.trim()) return itemsRankeados
     const q = busqueda.toLowerCase().trim()
+    const qSinHash = q.replace(/^#/, '')
+    const qCleanNum = qSinHash.replace(/^0+/, '')
+
     return itemsRankeados.filter((item) => {
       const matchAtleta = item.nombres.toLowerCase().includes(q)
       const matchPartner = item.partnerNombres ? item.partnerNombres.toLowerCase().includes(q) : false
       const matchCat = item.categoriaNombre ? item.categoriaNombre.toLowerCase().includes(q) : false
-      return matchAtleta || matchPartner || matchCat
+      const dorsalClean = item.dorsal ? item.dorsal.replace(/^0+/, '') : ''
+      const matchDorsal = !!(
+        item.dorsal &&
+        (item.dorsal.toLowerCase().includes(q) ||
+          `#${item.dorsal.toLowerCase()}`.includes(q) ||
+          (qCleanNum && (dorsalClean === qCleanNum || dorsalClean.includes(qCleanNum))))
+      )
+      return matchAtleta || matchPartner || matchCat || matchDorsal
     })
   }, [itemsRankeados, busqueda])
 
@@ -275,7 +286,7 @@ export default function LeaderboardPublicoClient({
           type="text"
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
-          placeholder="Buscar atleta por nombre..."
+          placeholder="Buscar atleta o # dorsal..."
           className="w-full bg-zinc-950/90 border border-white/10 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-[#02D7E5] transition-colors"
         />
         {busqueda && (
@@ -379,6 +390,15 @@ export default function LeaderboardPublicoClient({
                       {/* Columna: Atleta */}
                       <td className="py-3 px-3 align-middle">
                         <div className="flex items-center gap-1.5 flex-wrap">
+                          {item.dorsal ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-mono font-bold bg-[#02D7E5]/15 text-[#02D7E5] border border-[#02D7E5]/30 shrink-0">
+                              #{item.dorsal}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-1 py-0.5 rounded-md text-[9px] font-mono font-semibold bg-zinc-800 text-zinc-500 border border-zinc-700/50 shrink-0">
+                              S/D
+                            </span>
+                          )}
                           <span className={`font-semibold text-xs leading-tight ${esYo ? 'text-[#02D7E5]' : 'text-white'}`}>
                             {item.nombres}
                           </span>

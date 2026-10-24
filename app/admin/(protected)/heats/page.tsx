@@ -67,12 +67,12 @@ export default async function HeatsPage() {
     }
   })
 
-  // 6. Obtener participantes de la simulación activa para conocer su categoría y heat actual
-  const partMap = new Map<string, { id: string; heat_asignado: string | null; categoria_id: string | null }>()
+  // 6. Obtener participantes de la simulación activa para conocer su categoría, heat actual y dorsal
+  const partMap = new Map<string, { id: string; heat_asignado: string | null; categoria_id: string | null; dorsal: string | null }>()
   if (simulacionReciente?.id) {
     const { data: participantes } = await supabase
       .from('participantes_simulacion')
-      .select('id, usuario_id, heat_asignado, categoria_id')
+      .select('id, usuario_id, heat_asignado, categoria_id, dorsal')
       .eq('simulacion_id', simulacionReciente.id)
 
     participantes?.forEach((p) => {
@@ -81,6 +81,7 @@ export default async function HeatsPage() {
           id: p.id,
           heat_asignado: p.heat_asignado,
           categoria_id: p.categoria_id,
+          dorsal: p.dorsal || null,
         })
       }
     })
@@ -99,6 +100,7 @@ export default async function HeatsPage() {
     return {
       id: part?.id || atleta.id,
       usuarioId: atleta.id,
+      dorsal: part?.dorsal || null,
       nombres: atleta.nombres || 'Atleta Sin Nombre',
       cedula: atleta.cedula || undefined,
       categoriaId: catId,

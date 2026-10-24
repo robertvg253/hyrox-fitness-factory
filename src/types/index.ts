@@ -89,6 +89,7 @@ export interface ParticipanteSimulacion {
   id: string;
   simulacion_id: string;
   usuario_id: string;
+  dorsal?: string | null;
   heat_asignado?: string | null;
   salida_asignada?: string | null;
   promedio_previo_segundos?: number | null;

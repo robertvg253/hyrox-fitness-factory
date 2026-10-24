@@ -73,6 +73,7 @@ export default async function CarreraPage() {
   const partMap = new Map<
     string,
     {
+      dorsal: string | null
       heat_asignado: string | null
       salida_asignada: string | null
       tiempo_resultado_segundos: number | null
@@ -89,6 +90,7 @@ export default async function CarreraPage() {
       .select(`
         id,
         usuario_id,
+        dorsal,
         heat_asignado,
         salida_asignada,
         tiempo_resultado_segundos,
@@ -131,6 +133,7 @@ export default async function CarreraPage() {
         const catNombre = catRel?.nombre || (p.categoria_id ? catMap.get(p.categoria_id) : null) || null
 
         partMap.set(p.usuario_id, {
+          dorsal: p.dorsal || null,
           heat_asignado: p.heat_asignado,
           salida_asignada: p.salida_asignada,
           tiempo_resultado_segundos: p.tiempo_resultado_segundos,
@@ -158,11 +161,12 @@ export default async function CarreraPage() {
 
     return {
       id: atleta.id,
+      dorsal: part?.dorsal || null,
       nombres: atleta.nombres || 'Atleta Sin Nombre',
       partnerNombres: part?.partner_nombres || null,
       cedula: atleta.cedula || undefined,
       categoriaNombre: part?.categoria_nombre || null,
-      heatAsignado: part?.heat_asignado || 'Sin Asignar',
+      heatAsignado: part?.heat_asignado?.trim() ? part.heat_asignado.trim() : 'Sin Heat Asignado',
       promedioSegundos: promSec,
       promedioMMSS: formatSegundosAMM_SS(promSec),
       tiempoResultadoSegundos: resultadoSec,

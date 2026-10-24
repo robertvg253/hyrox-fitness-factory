@@ -96,15 +96,17 @@ export default async function DashboardPage() {
 
   let heatAsignado: string | null = null
   let salidaAsignada: string | null = null
+  let dorsalAsignado: string | null = null
   if (simulacionReciente?.id) {
     const { data: participacion } = await supabase
       .from('participantes_simulacion')
-      .select('heat_asignado, salida_asignada')
+      .select('heat_asignado, salida_asignada, dorsal')
       .eq('simulacion_id', simulacionReciente.id)
       .eq('usuario_id', user.id)
       .maybeSingle()
     heatAsignado = participacion?.heat_asignado || null
     salidaAsignada = participacion?.salida_asignada || null
+    dorsalAsignado = participacion?.dorsal || null
   }
 
   // Atributos del atleta
@@ -199,7 +201,13 @@ export default async function DashboardPage() {
                 </span>
               </div>
 
-              {heatAsignado ? (
+              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                {dorsalAsignado && (
+                  <span className="inline-flex items-center px-2 py-1 rounded-full bg-[#02D7E5]/15 border border-[#02D7E5]/40 text-[#02D7E5] font-mono font-bold text-xs shadow-sm">
+                    #{dorsalAsignado}
+                  </span>
+                )}
+                {heatAsignado ? (
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-gradient-to-r from-[#02D7E5]/20 to-cyan-500/10 border border-[#02D7E5]/40 text-[#02D7E5] font-bold text-xs shadow-sm">
                   <Flame className="w-3.5 h-3.5 text-[#02D7E5]" />
                   <span>{heatAsignado}</span>
@@ -218,6 +226,7 @@ export default async function DashboardPage() {
                   <span>Pendiente de publicación</span>
                 </div>
               )}
+              </div>
             </div>
 
             {/* Grid de Métricas Principales: Promedio Dinámico & Mejor Marca (PR) */}
